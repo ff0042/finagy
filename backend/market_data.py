@@ -8,6 +8,7 @@ import urllib.request
 import json
 import concurrent.futures
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, Any, List, Set
 
 class PriceCache:
@@ -79,6 +80,101 @@ class BaseMarketData(abc.ABC):
     @abc.abstractmethod
     def add_ticker(self, ticker: str):
         pass
+
+class SchwabMarketData(BaseMarketData):
+    """Schwab Developer API Market Data Provider using schwabdev library."""
+    def __init__(self):
+        self.running = False
+        self.tickers: Set[str] = set()
+        self._lock = threading.Lock()
+        self.client = None
+        self._init_client()
+
+    def _init_client(self):
+        app_key = os.getenv("SCHWAB_CLIENT_ID") or os.getenv("SCHWAB_APP_KEY")
+        app_secret = os.getenv("SCHWAB_CLIENT_SECRET") or os.getenv("SCHWAB_APP_SECRET")
+        callback_url = os.getenv("SCHWAB_REDIRECT_URI", "https://127.0.0.1:8080")
+        tokens_file = os.getenv("SCHWAB_TOKENS_FILE", "db/tokens.json")
+
+        if not app_key or not app_secret:
+            raise ValueError("Schwab API credentials missing (SCHWAB_CLIENT_ID / SCHWAB_CLIENT_SECRET)")
+
+        tokens_path = Path(tokens_file)
+        if not tokens_path.exists():
+            # Check for existing tokens file in schwab-options-bot cursor project
+            fallback = Path(r"D:\Documents\CursorProjects\schwab-options-bot\tokens.json")
+            if fallback.exists():
+                tokens_path.parent.mkdir(parents=True, exist_ok=True)
+                tokens_path.write_bytes(fallback.read_bytes())
+
+        try:
+            import schwabdev
+            self.client = schwabdev.Client(
+                app_key=app_key,
+                app_secret=app_secret,
+                callback_url=callback_url,
+                tokens_file=str(tokens_path)
+            )
+        except Exception as e:
+            print(f"[WARN] schwabdev client initialization error: {e}")
+            self.client = None
+
+    def start(self, tickers: List[str]):
+        with self._lock:
+            self.tickers = set(t.upper() for t in tickers)
+        self.running = True
+        self.thread = threading.Thread(target=self._poll, daemon=True)
+        self.thread.start()
+
+    def add_ticker(self, ticker: str):
+        ticker = ticker.upper()
+        with self._lock:
+            if ticker not in self.tickers:
+                self.tickers.add(ticker)
+                threading.Thread(target=self._fetch_single_quote, args=(ticker,), daemon=True).start()
+
+    def _fetch_single_quote(self, ticker: str):
+        if self.client:
+            try:
+                resp = self.client.quotes([ticker])
+                if resp and resp.status_code == 200:
+                    data = resp.json()
+                    quote = data.get(ticker, {}).get("quote", {})
+                    price = quote.get("lastPrice") or quote.get("mark")
+                    if price:
+                        price_cache.update(ticker, round(float(price), 2))
+                        return
+            except Exception:
+                pass
+        price = fetch_real_market_price(ticker)
+        price_cache.update(ticker, price)
+
+    def _poll(self):
+        while self.running:
+            with self._lock:
+                active_list = list(self.tickers)
+
+            if active_list and self.client:
+                try:
+                    resp = self.client.quotes(active_list)
+                    if resp and resp.status_code == 200:
+                        data = resp.json()
+                        for ticker in active_list:
+                            quote_info = data.get(ticker, {}).get("quote", {})
+                            price = quote_info.get("lastPrice") or quote_info.get("mark")
+                            if price:
+                                price_cache.update(ticker, round(float(price), 2))
+                except Exception:
+                    for ticker in active_list:
+                        cp = price_cache.get(ticker)
+                        current = cp["price"] if cp else fetch_real_market_price(ticker)
+                        price_cache.update(ticker, round(current, 2))
+            else:
+                for ticker in active_list:
+                    price = fetch_real_market_price(ticker)
+                    price_cache.update(ticker, price)
+
+            time.sleep(2.0)
 
 class GBMMarketSimulator(BaseMarketData):
     def __init__(self):
@@ -181,9 +277,19 @@ _provider_instance = None
 def get_market_data_provider() -> BaseMarketData:
     global _provider_instance
     if _provider_instance is None:
-        api_key = os.getenv("MASSIVE_API_KEY")
-        if api_key:
-            _provider_instance = MassiveMarketData(api_key)
+        mock_mode = os.getenv("LLM_MOCK", "false").lower() == "true"
+        schwab_key = os.getenv("SCHWAB_CLIENT_ID") or os.getenv("SCHWAB_APP_KEY")
+        
+        # When LLM_MOCK is false and Schwab key is available, use Schwab Developer API
+        if not mock_mode and schwab_key:
+            try:
+                _provider_instance = SchwabMarketData()
+                print("[INFO] Initialized Schwab Developer API Market Data Provider.")
+            except Exception as e:
+                print(f"[WARN] Failed to initialize Schwab Market Data ({e}). Falling back to live simulator.")
+                _provider_instance = GBMMarketSimulator()
+        elif os.getenv("MASSIVE_API_KEY"):
+            _provider_instance = MassiveMarketData(os.getenv("MASSIVE_API_KEY"))
         else:
             _provider_instance = GBMMarketSimulator()
     return _provider_instance
