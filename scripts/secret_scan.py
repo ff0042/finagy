@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 Pre-commit / Pre-push Secret Scanner for Finagy.
-Scans staged git files for potential secret keys, API tokens, and credentials.
+Scans staged git files for potential secret keys, API tokens, credentials, and personal designators.
 """
 
 import sys
 import re
 import subprocess
 
-# Secret patterns to detect
+# Secret and Personal Designator patterns to detect
 PATTERNS = [
     (r"sk-[a-zA-Z0-9]{32,}", "OpenAI API Key"),
     (r"sk-or-[a-zA-Z0-9]{32,}", "OpenRouter API Key"),
@@ -18,6 +18,7 @@ PATTERNS = [
     (r"-----BEGIN (RSA|OPENSSH|EC|PGP) PRIVATE KEY-----", "Private Cryptographic Key"),
     (r"\"refresh_token\"\s*:\s*\"[^\"]{20,}\"", "OAuth Refresh Token"),
     (r"\"access_token\"\s*:\s*\"[^\"]{20,}\"", "OAuth Access Token"),
+    (r"FF42", "Personal Designator Identifier"),
 ]
 
 # File patterns to exclude from scanning
@@ -68,14 +69,14 @@ def main():
         findings = scan_file(filepath)
         if findings:
             total_findings += len(findings)
-            print(f"\n[ALERT] Potential secret detected in file: {filepath}")
+            print(f"\n[ALERT] Potential secret or personal designator detected in file: {filepath}")
             for line_no, secret_type, snippet in findings:
                 masked_snippet = snippet[:15] + "..." + snippet[-10:] if len(snippet) > 30 else snippet
                 print(f"   Line {line_no} ({secret_type}): {masked_snippet}")
 
     if total_findings > 0:
         print("\n" + "=" * 70)
-        print("[ERROR] COMMIT BLOCKED: Potential sensitive information detected.")
+        print("[ERROR] COMMIT BLOCKED: Potential sensitive information or personal designator detected.")
         print("Please sanitize the file(s) before committing or pushing.")
         print("If this is a false positive, verify manually and update scripts/secret_scan.py.")
         print("=" * 70 + "\n")

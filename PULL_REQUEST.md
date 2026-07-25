@@ -1,53 +1,111 @@
-# Pull Request: feat(v2): Schwab Developer API Market Data Provider Integration (schwabdev v3.0.5)
+# Pull Request: feat(v3): Multi-Account Selection & Schwab Developer API Integration
 
 ## 📌 Title
-`feat(v2): Schwab Developer API Market Data Provider Integration (schwabdev v3.0.5)`
+`feat(v3): Multi-Account Selection & Schwab Developer API Integration`
 
 ---
 
-## 📝 Summary & Rationale
-This Pull Request introduces **V2 Schwab Developer API Market Data Integration** for Finagy/FinAlly. When `LLM_MOCK=false` and Schwab Developer API credentials are provided, the backend seamlessly routes price streaming through official Schwab Market Data quotes endpoints via the latest **`schwabdev v3.0.5`** PyPI package.
+## 📋 Executive Summary
+This Pull Request introduces **V3 Multi-Account Selection** for Finagy/FinAlly. Users can now view, select, and switch between multiple trading accounts (e.g., `ROTH_IRA`, `TRADING_MAIN`, `TAXABLE_ACCOUNT`, or live linked Schwab accounts) directly from the workstation header. All portfolio balances, stock positions, treemap heatmaps, PnL historical charts, and quick market trade executions (`buy`/`sell`) are dynamically scoped to the selected active account.
 
 ---
 
-## 🛠️ Key Changes
+## 🏗️ Technical Architecture & Detailed Changes
 
-### 1. Market Data Engine (`backend/market_data.py`)
-* **`SchwabMarketData` Provider Class**:
-  * Initializes `schwabdev.Client` using `SCHWAB_CLIENT_ID`, `SCHWAB_CLIENT_SECRET`, and `SCHWAB_REDIRECT_URI`.
-  * Auto-discovers and manages OAuth2 refresh tokens in `db/tokens.json` (with fallback discovery for local development token files).
-  * Polls live market quotes (`client.quotes(tickers)`) on a 2-second interval, populating active price caches.
-  * Includes automated fallback to `fetch_real_market_price(ticker)` if Schwab API tokens require re-authorization or encounter network delays.
-* **Provider Factory (`get_market_data_provider`)**:
-  * Dynamically instantiates `SchwabMarketData` when `LLM_MOCK=false` and Schwab credentials are present.
+### 1. Database Schema & Auto-Migrations (`backend/db/database.py`)
+* **`accounts` Table**:
+  * Fields: `id` (PRIMARY KEY), `user_id`, `account_number`, `account_hash`, `name`, `type`, `is_active` (0/1), `cash_balance`, `created_at`.
+  * Seeded default mock accounts for offline testing (`ROTH_IRA` [$10,000], `TRADING_MAIN` [$25,000], `TAXABLE_ACCOUNT` [$50,000]).
+* **Column Auto-Migrations**:
+  * Automatically applies `ALTER TABLE ... ADD COLUMN account_id` to existing SQLite tables (`watchlist`, `positions`, `trades`, `portfolio_snapshots`) for backward compatibility.
+* **Account State Helpers**:
+  * `list_accounts()`: Retrieves all available user accounts.
+  * `get_active_account()`: Fetches the currently selected account (`is_active = 1`).
+  * `set_active_account(account_id)`: Atomically updates active account selection.
 
-### 2. Dependencies & Runtime (`backend/pyproject.toml` & `uv.lock`)
-* Added `schwabdev>=3.0.5` dependency.
-* Updated `requires-python` requirement to `>=3.11` as mandated by `schwabdev v3.x`.
+### 2. Schwab Developer API Multi-Account Wrapper (`backend/schwab_service.py`)
+* **`SchwabService` Class**:
+  * High-level service wrapper using `schwabdev v3.0.5`.
+  * `get_linked_accounts()`: Invokes `client.account_linked()` to retrieve account numbers and `hashValue` keys.
+  * `get_account_details(account_hash)`: Queries live balances and equity/options positions via `client.account_details()`.
+  * `place_market_order(...)`: Formats and submits equity market orders (`BUY`/`SELL`) against the active `account_hash`.
 
-### 3. Environment & Documentation (`.env.example`)
-* Added Schwab Developer credential configurations to `.env.example`:
-  ```env
-  SCHWAB_CLIENT_ID=your-schwab-client-id-here
-  SCHWAB_CLIENT_SECRET=your-schwab-client-secret-here
-  SCHWAB_REDIRECT_URI=https://127.0.0.1:8080
-  SCHWAB_TOKENS_FILE=db/tokens.json
+### 3. REST API Endpoint Expansion (`backend/main.py`)
+* **Account Management Endpoints**:
+  * `GET /api/accounts`: Returns list of available accounts for dropdown selector.
+  * `GET /api/accounts/active`: Returns details of currently active account.
+  * `POST /api/accounts/select`: Sets active account (`{"account_id": "acct_roth"}`).
+* **Account Scoping**:
+  * `GET /api/portfolio`: Dynamically computes cash, positions, and total value for the active `account_id`.
+  * `POST /api/portfolio/trade`: Routes order execution to `schwab_service.place_market_order()` using active `account_hash`.
+  * `GET /api/portfolio/history`: Filters snapshot history by active `account_id`.
+
+### 4. Frontend Account Selector Component (`frontend/src/components/AccountSelector.tsx` & `Header.tsx`)
+* **`AccountSelector.tsx`**:
+  * Reusable UI dropdown displaying account name, masked account number (`***5131`), account type (`ROTH`/`INDIVIDUAL`), and cash balance.
+  * On selection, posts to `/api/accounts/select` and dispatches custom `refresh-workstation` event.
+* **`Header.tsx`**:
+  * Integrated `AccountSelector` into workstation navigation bar.
+
+---
+
+## 📡 API Specification
+
+### `GET /api/accounts`
+* **Response**: `200 OK`
+  ```json
+  [
+    {
+      "id": "acct_roth",
+      "account_number": "56515131",
+      "account_hash": "hash_roth_56515131",
+      "name": "ROTH_IRA",
+      "type": "ROTH",
+      "is_active": 1,
+      "cash_balance": 10000.0
+    },
+    {
+      "id": "acct_trading",
+      "account_number": "88421092",
+      "account_hash": "hash_trading_88421092",
+      "name": "TRADING_MAIN",
+      "type": "INDIVIDUAL",
+      "is_active": 0,
+      "cash_balance": 25000.0
+    }
+  ]
   ```
 
----
-
-## 🧪 Testing & Verification
-
-* **Unit Tests**: Executed Pytest suite using `uv run --python 3.11 python -m pytest`.
-  * Result: **`6 passed in 1.87s`**.
-* **Container Build**: Built and verified single-container Docker image serving pre-compiled Next.js 14 frontend and FastAPI backend.
-* **SSE Price Streaming**: Verified live `/api/watchlist` and `/api/stream/prices` endpoints streaming real-time prices.
+### `POST /api/accounts/select`
+* **Request Body**:
+  ```json
+  { "account_id": "acct_trading" }
+  ```
+* **Response**: `200 OK` returning updated active account dictionary.
 
 ---
 
-## 🚀 How to Test / Review
+## 🧪 Verification & Test Results
 
-1. Pull the branch: `git checkout feature/v2-schwab-market-data`
-2. Update `.env` with your Schwab Developer credentials or set `LLM_MOCK=false`.
-3. Launch container: `.\scripts\start_windows.ps1`
-4. Access workstation at `http://localhost:8000/`.
+### Automated Unit Tests (`backend/tests/test_backend.py`)
+* Executed Pytest suite using `uv run --python 3.11 python -m pytest`.
+* **Result**: **`7 passed in 1.47s`** (added `test_accounts_api` for account listing and active selection).
+
+### Frontend Build
+* Built static export using `npm run build` in `frontend/`.
+* Next.js static pages generated cleanly (`4/4 static pages prerendered`).
+
+### Docker Single-Container Verification
+* Rebuilt and verified Docker image running live on `http://localhost:8000/`.
+
+---
+
+## 🔒 Security Verification
+* Ran local pre-commit secret scanner script (`scripts/secret_scan.py`).
+* **Result**: `[SUCCESS] No sensitive secrets or personal designators detected in staged files.`
+
+---
+
+## 🚀 Known Limitations & Next Steps (V3.1 / V4)
+* **OAuth2 Authentication Flow**: Schwab API refresh tokens require periodic browser OAuth re-authorization. The next task (V3.1) will implement automated OAuth PKCE callback handling and token refresh flows.
+* **Options Desk**: Subsequent release (V4) will add options chain visualization and multi-leg order execution.
