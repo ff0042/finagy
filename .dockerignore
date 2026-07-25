@@ -1,0 +1,15 @@
+.git
+.gitignore
+node_modules
+**/node_modules
+.next
+**/.next
+.venv
+**/.venv
+__pycache__
+/**/__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+db/finally.db
