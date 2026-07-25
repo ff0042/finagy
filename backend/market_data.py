@@ -94,18 +94,13 @@ class SchwabMarketData(BaseMarketData):
         app_key = os.getenv("SCHWAB_CLIENT_ID") or os.getenv("SCHWAB_APP_KEY")
         app_secret = os.getenv("SCHWAB_CLIENT_SECRET") or os.getenv("SCHWAB_APP_SECRET")
         callback_url = os.getenv("SCHWAB_REDIRECT_URI", "https://127.0.0.1:8080")
-        tokens_file = os.getenv("SCHWAB_TOKENS_FILE", "db/tokens.json")
+        tokens_db = os.getenv("SCHWAB_TOKENS_DB", "db/tokens.db")
 
         if not app_key or not app_secret:
             raise ValueError("Schwab API credentials missing (SCHWAB_CLIENT_ID / SCHWAB_CLIENT_SECRET)")
 
-        tokens_path = Path(tokens_file)
-        if not tokens_path.exists():
-            # Check for existing tokens file in schwab-options-bot cursor project
-            fallback = Path(r"D:\Documents\CursorProjects\schwab-options-bot\tokens.json")
-            if fallback.exists():
-                tokens_path.parent.mkdir(parents=True, exist_ok=True)
-                tokens_path.write_bytes(fallback.read_bytes())
+        tokens_path = Path(tokens_db)
+        tokens_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
             import schwabdev
@@ -113,7 +108,7 @@ class SchwabMarketData(BaseMarketData):
                 app_key=app_key,
                 app_secret=app_secret,
                 callback_url=callback_url,
-                tokens_file=str(tokens_path)
+                tokens_db=str(tokens_path)
             )
         except Exception as e:
             print(f"[WARN] schwabdev client initialization error: {e}")

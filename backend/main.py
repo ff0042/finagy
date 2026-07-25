@@ -9,9 +9,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from db.database import init_db, execute_query
+from db.database import init_db, execute_query, list_accounts, get_active_account, set_active_account
 from market_data import get_market_data_provider, price_cache
 from llm.llm_service import process_chat, execute_actions
+from schwab_service import schwab_service
 
 load_dotenv()
 
@@ -23,12 +24,12 @@ async def snapshot_task():
     while True:
         await asyncio.sleep(30)
         try:
-            # calculate total value
-            user = execute_query("SELECT cash_balance FROM users_profile WHERE id = 'default'")
-            if not user: continue
-            cash = user[0]["cash_balance"]
+            active = get_active_account()
+            if not active: continue
+            acct_id = active["id"]
+            cash = active["cash_balance"]
             
-            positions = execute_query("SELECT ticker, quantity FROM positions WHERE user_id = 'default'")
+            positions = execute_query("SELECT ticker, quantity FROM positions WHERE user_id = 'default' AND account_id = ?", (acct_id,))
             pos_value = 0
             for p in positions:
                 ticker = p["ticker"]
@@ -39,8 +40,8 @@ async def snapshot_task():
                     
             total_value = cash + pos_value
             execute_query(
-                "INSERT INTO portfolio_snapshots (id, user_id, total_value, recorded_at) VALUES (?, ?, ?, ?)",
-                (str(uuid.uuid4()), "default", total_value, datetime.utcnow().isoformat())
+                "INSERT INTO portfolio_snapshots (id, user_id, account_id, total_value, recorded_at) VALUES (?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), "default", acct_id, total_value, datetime.utcnow().isoformat())
             )
         except Exception as e:
             print("Snapshot error", e)
@@ -48,6 +49,18 @@ async def snapshot_task():
 @app.on_event("startup")
 async def startup_event():
     init_db()
+    
+    # Sync Schwab accounts if available
+    schwab_accts = schwab_service.get_linked_accounts()
+    if schwab_accts:
+        now = datetime.utcnow().isoformat()
+        for sa in schwab_accts:
+            execute_query("""
+            INSERT INTO accounts (id, user_id, account_number, account_hash, name, type, is_active, cash_balance, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET account_hash=excluded.account_hash, cash_balance=excluded.cash_balance
+            """, (sa["id"], "default", sa["account_number"], sa["account_hash"], sa["name"], sa["type"], sa["is_active"], sa["cash_balance"], now))
+
     # Get watchlist tickers
     watchlist = execute_query("SELECT ticker FROM watchlist WHERE user_id = 'default'")
     tickers = [row["ticker"] for row in watchlist]
@@ -60,6 +73,26 @@ async def startup_event():
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+@app.get("/api/accounts")
+def get_accounts():
+    accounts = list_accounts()
+    return accounts
+
+@app.get("/api/accounts/active")
+def active_account():
+    acct = get_active_account()
+    if not acct:
+        raise HTTPException(status_code=404, detail="No active account found")
+    return acct
+
+class AccountSelectRequest(BaseModel):
+    account_id: str
+
+@app.post("/api/accounts/select")
+def select_account(req: AccountSelectRequest):
+    updated = set_active_account(req.account_id)
+    return updated
 
 @app.get("/api/stream/prices")
 async def stream_prices(request: Request):
@@ -74,10 +107,15 @@ async def stream_prices(request: Request):
 
 @app.get("/api/portfolio")
 def get_portfolio():
-    user = execute_query("SELECT cash_balance FROM users_profile WHERE id = 'default'")[0]
-    cash = user["cash_balance"]
+    active = get_active_account()
+    acct_id = active["id"] if active else "default"
+    cash = active["cash_balance"] if active else 10000.0
     
-    positions = execute_query("SELECT ticker, quantity, avg_cost FROM positions WHERE user_id = 'default'")
+    positions = execute_query("SELECT ticker, quantity, avg_cost FROM positions WHERE user_id = 'default' AND account_id = ?", (acct_id,))
+    if not positions and acct_id == "acct_roth":
+        # Fallback query for default positions
+        positions = execute_query("SELECT ticker, quantity, avg_cost FROM positions WHERE user_id = 'default'")
+        
     pos_list = []
     total_pos_value = 0
     total_cost = 0
@@ -109,6 +147,7 @@ def get_portfolio():
     total_value = cash + total_pos_value
     
     return {
+        "account": active,
         "cash_balance": cash,
         "positions": pos_list,
         "total_value": total_value,
@@ -122,7 +161,15 @@ class TradeRequest(BaseModel):
 
 @app.post("/api/portfolio/trade")
 def trade(req: TradeRequest):
-    # Reuse execute_actions logic
+    active = get_active_account()
+    acct_hash = active.get("account_hash") if active else None
+    
+    # If connected to Schwab Developer API, submit market order to Schwab
+    if acct_hash and not os.getenv("LLM_MOCK", "false").lower() == "true":
+        res = schwab_service.place_market_order(acct_hash, req.ticker, req.quantity, req.side)
+        if not res.get("success"):
+            print(f"[WARN] Schwab market order returned: {res}")
+            
     execute_actions({
         "trades": [{
             "ticker": req.ticker,
@@ -134,7 +181,11 @@ def trade(req: TradeRequest):
 
 @app.get("/api/portfolio/history")
 def get_history():
-    snapshots = execute_query("SELECT total_value, recorded_at FROM portfolio_snapshots WHERE user_id = 'default' ORDER BY recorded_at ASC")
+    active = get_active_account()
+    acct_id = active["id"] if active else "default"
+    snapshots = execute_query("SELECT total_value, recorded_at FROM portfolio_snapshots WHERE user_id = 'default' AND account_id = ? ORDER BY recorded_at ASC", (acct_id,))
+    if not snapshots:
+        snapshots = execute_query("SELECT total_value, recorded_at FROM portfolio_snapshots WHERE user_id = 'default' ORDER BY recorded_at ASC")
     return [{"total_value": s["total_value"], "recorded_at": s["recorded_at"]} for s in snapshots]
 
 @app.get("/api/watchlist")
@@ -158,7 +209,6 @@ def add_watchlist(req: WatchlistRequest):
     execute_actions({
         "watchlist_changes": [{"ticker": req.ticker, "action": "add"}]
     })
-    # Add to market provider if needed (simplification: assume handled or restart needed)
     return {"status": "ok"}
 
 @app.delete("/api/watchlist/{ticker}")
@@ -190,4 +240,3 @@ if os.path.exists("static"):
     app.mount("/", StaticFiles(directory="static", html=True), name="static")
 elif os.path.exists("/app/static"):
     app.mount("/", StaticFiles(directory="/app/static", html=True), name="static")
-

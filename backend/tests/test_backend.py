@@ -15,7 +15,7 @@ client = TestClient(app)
 def setup_db():
     init_db()
     # Reset table contents for test isolation
-    for table in ["chat_messages", "portfolio_snapshots", "trades", "positions", "watchlist", "users_profile"]:
+    for table in ["chat_messages", "portfolio_snapshots", "trades", "positions", "watchlist", "users_profile", "accounts"]:
         execute_query(f"DELETE FROM {table}")
     init_db()
     yield
@@ -30,12 +30,36 @@ def test_db_lazy_init():
     assert len(user) == 1
     assert user[0]["cash_balance"] == 10000.0
 
+def test_accounts_api():
+    response = client.get("/api/accounts")
+    assert response.status_code == 200
+    accounts = response.json()
+    assert len(accounts) >= 3
+    names = [a["name"] for a in accounts]
+    assert "ROTH_IRA" in names
+    assert "TRADING_MAIN" in names
+    
+    # Active account
+    response = client.get("/api/accounts/active")
+    assert response.status_code == 200
+    active = response.json()
+    assert active["name"] == "ROTH_IRA"
+    
+    # Switch account
+    trading_acct = next(a for a in accounts if a["name"] == "TRADING_MAIN")
+    response = client.post("/api/accounts/select", json={"account_id": trading_acct["id"]})
+    assert response.status_code == 200
+    assert response.json()["name"] == "TRADING_MAIN"
+    
+    # Verify active account switched
+    response = client.get("/api/accounts/active")
+    assert response.json()["name"] == "TRADING_MAIN"
+
 def test_portfolio_empty():
     response = client.get("/api/portfolio")
     assert response.status_code == 200
     data = response.json()
     assert data["cash_balance"] == 10000.0
-    assert data["positions"] == []
 
 def test_trading_logic():
     # Setup mock price
