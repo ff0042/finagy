@@ -5,7 +5,7 @@ Write-Host "[INFO] Launching FinAlly (Finance Ally)..." -ForegroundColor Cyan
 
 $ImageName = "finally-app"
 $ContainerName = "finally-container"
-$Port = 8000
+$Port = 8080
 
 # Determine project root directory whether script is run from project root or scripts folder
 if ($PSScriptRoot) {
@@ -45,7 +45,7 @@ if (-not (Test-Path $DbVolumeDir)) {
     New-Item -ItemType Directory -Path $DbVolumeDir | Out-Null
 }
 
-# Run container
+# Run container on port 8080
 Write-Host "[RUN] Starting FinAlly container on port $Port..." -ForegroundColor Green
 if (Test-Path $EnvFile) {
     docker run -d --name $ContainerName -p "${Port}:8000" --env-file $EnvFile -v "${DbVolumeDir}:/app/db" $ImageName
@@ -53,6 +53,6 @@ if (Test-Path $EnvFile) {
     docker run -d --name $ContainerName -p "${Port}:8000" -v "${DbVolumeDir}:/app/db" $ImageName
 }
 
-$Url = "http://localhost:$Port"
-Write-Host "[SUCCESS] FinAlly service is up and running!" -ForegroundColor Green
+$Url = "https://localhost:$Port"
+Write-Host "[SUCCESS] FinAlly HTTPS service is up and running!" -ForegroundColor Green
 Write-Host "[URL] Access the workstation at: $Url" -ForegroundColor Cyan

@@ -3,8 +3,8 @@ import json
 import uuid
 import os
 from datetime import datetime
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, Request, HTTPException, Query
+from fastapi.responses import StreamingResponse, HTMLResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -54,12 +54,12 @@ async def startup_event():
     schwab_accts = schwab_service.get_linked_accounts()
     if schwab_accts:
         now = datetime.utcnow().isoformat()
-        for sa in schwab_accts:
+        for idx, sa in enumerate(schwab_accts):
             execute_query("""
             INSERT INTO accounts (id, user_id, account_number, account_hash, name, type, is_active, cash_balance, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET account_hash=excluded.account_hash, cash_balance=excluded.cash_balance
-            """, (sa["id"], "default", sa["account_number"], sa["account_hash"], sa["name"], sa["type"], sa["is_active"], sa["cash_balance"], now))
+            """, (sa["id"], "default", sa["account_number"], sa["account_hash"], sa["name"], sa["type"], 1 if idx == 0 else 0, sa["cash_balance"], now))
 
     # Get watchlist tickers
     watchlist = execute_query("SELECT ticker FROM watchlist WHERE user_id = 'default'")
@@ -74,9 +74,101 @@ async def startup_event():
 def health():
     return {"status": "ok"}
 
+@app.get("/api/schwab/auth-status")
+def schwab_auth_status():
+    status = schwab_service.get_token_status()
+    return status
+
+@app.get("/api/schwab/auth-url")
+def schwab_auth_url():
+    url = schwab_service.get_auth_url()
+    return {"auth_url": url}
+
+@app.post("/api/schwab/disconnect")
+def schwab_disconnect():
+    schwab_service.disconnect()
+    execute_query("UPDATE accounts SET is_active = 0 WHERE user_id = 'default'")
+    return {"status": "disconnected"}
+
+def render_schwab_success_page():
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Schwab Authorization Successful</title>
+        <style>
+            body { background-color: #0d1117; color: #ffffff; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+            .card { background-color: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 2rem; text-align: center; max-width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+            h2 { color: #2ea043; margin-top: 0; }
+            p { color: #8b949e; font-size: 14px; }
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            <h2>Schwab Connected!</h2>
+            <p>Your authentication tokens have been updated successfully.</p>
+            <p>You can close this window and return to FinAlly workstation.</p>
+        </div>
+        <script>
+            if (window.opener) {
+                try { window.opener.postMessage("schwab-auth-success", "*"); } catch(e) {}
+                setTimeout(() => window.close(), 2500);
+            }
+        </script>
+    </body>
+    </html>
+    """
+
+@app.get("/api/schwab/callback")
+def schwab_callback(code: str = Query(None), session: str = Query(None)):
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing code parameter")
+    schwab_service.exchange_code_for_tokens(code)
+    return HTMLResponse(content=render_schwab_success_page())
+
+@app.get("/")
+def root(code: str = Query(None), session: str = Query(None)):
+    if code:
+        schwab_service.exchange_code_for_tokens(code)
+        return HTMLResponse(content=render_schwab_success_page())
+    if os.path.exists("static/index.html"):
+        return FileResponse("static/index.html")
+    return {"status": "ok"}
+
 @app.get("/api/accounts")
 def get_accounts():
     accounts = list_accounts()
+    is_mock = os.getenv("LLM_MOCK", "false").lower() == "true"
+    schwab_connected = schwab_service.get_token_status().get("authenticated", False)
+    
+    if schwab_connected:
+        schwab_accts = [a for a in accounts if a["type"] == "SCHWAB"]
+        if not schwab_accts:
+            # Refresh from service
+            new_sa = schwab_service.get_linked_accounts()
+            if new_sa:
+                now = datetime.utcnow().isoformat()
+                for idx, sa in enumerate(new_sa):
+                    execute_query("""
+                    INSERT INTO accounts (id, user_id, account_number, account_hash, name, type, is_active, cash_balance, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET account_hash=excluded.account_hash, cash_balance=excluded.cash_balance
+                    """, (sa["id"], "default", sa["account_number"], sa["account_hash"], sa["name"], sa["type"], 1 if idx == 0 else 0, sa["cash_balance"], now))
+                accounts = list_accounts()
+                schwab_accts = [a for a in accounts if a["type"] == "SCHWAB"]
+                
+        if schwab_accts:
+            # Ensure one account is marked active
+            if not any(a.get("is_active") == 1 for a in schwab_accts):
+                active_id = schwab_accts[0]["id"]
+                set_active_account(active_id)
+                for sa in schwab_accts:
+                    sa["is_active"] = 1 if sa["id"] == active_id else 0
+            return schwab_accts
+            
+    if not is_mock:
+        return []
+        
     return accounts
 
 @app.get("/api/accounts/active")
@@ -107,13 +199,37 @@ async def stream_prices(request: Request):
 
 @app.get("/api/portfolio")
 def get_portfolio():
+    is_mock = os.getenv("LLM_MOCK", "false").lower() == "true"
+    schwab_connected = schwab_service.get_token_status().get("authenticated", False)
+    
+    if not schwab_connected and not is_mock:
+        return {
+            "account": None,
+            "cash_balance": 0.0,
+            "positions": [],
+            "total_value": 0.0,
+            "total_pnl": 0.0
+        }
+
     active = get_active_account()
     acct_id = active["id"] if active else "default"
+    acct_hash = active.get("account_hash") if active else None
     cash = active["cash_balance"] if active else 10000.0
     
+    # Query live cash balance from Schwab if authenticated
+    if acct_hash and schwab_service.client:
+        try:
+            details = schwab_service.get_account_details(acct_hash)
+            if details and "securitiesAccount" in details:
+                balances = details.get("securitiesAccount", {}).get("currentBalances", {})
+                if "cashBalance" in balances:
+                    cash = balances["cashBalance"]
+                    execute_query("UPDATE accounts SET cash_balance = ? WHERE id = ?", (cash, acct_id))
+        except Exception as e:
+            print(f"[WARN] Failed to fetch live Schwab balances: {e}")
+
     positions = execute_query("SELECT ticker, quantity, avg_cost FROM positions WHERE user_id = 'default' AND account_id = ?", (acct_id,))
     if not positions and acct_id == "acct_roth":
-        # Fallback query for default positions
         positions = execute_query("SELECT ticker, quantity, avg_cost FROM positions WHERE user_id = 'default'")
         
     pos_list = []
@@ -164,7 +280,6 @@ def trade(req: TradeRequest):
     active = get_active_account()
     acct_hash = active.get("account_hash") if active else None
     
-    # If connected to Schwab Developer API, submit market order to Schwab
     if acct_hash and not os.getenv("LLM_MOCK", "false").lower() == "true":
         res = schwab_service.place_market_order(acct_hash, req.ticker, req.quantity, req.side)
         if not res.get("success"):

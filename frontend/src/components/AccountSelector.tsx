@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { ChevronDown, Wallet } from 'lucide-react';
+import { ChevronDown, Wallet, Lock } from 'lucide-react';
 
 interface Account {
   id: string;
@@ -23,10 +23,17 @@ export default function AccountSelector() {
       if (res.ok) {
         const data: Account[] = await res.json();
         setAccounts(data);
-        const currentActive = data.find(a => a.is_active === 1) || data[0] || null;
-        setActiveAccount(currentActive);
+        if (data.length > 0) {
+          const currentActive = data.find(a => a.is_active === 1) || data[0];
+          setActiveAccount(currentActive);
+        } else {
+          setActiveAccount(null);
+        }
       }
-    } catch (err) {}
+    } catch (err) {
+      setAccounts([]);
+      setActiveAccount(null);
+    }
   }, []);
 
   useEffect(() => {
@@ -62,6 +69,15 @@ export default function AccountSelector() {
   const getSuffix = (acctNum: string) => {
     return acctNum && acctNum.length >= 4 ? `***${acctNum.slice(-4)}` : '';
   };
+
+  if (!accounts || accounts.length === 0) {
+    return (
+      <div className="flex items-center gap-2 bg-card2 border border-gray-800 rounded-md px-3 py-1.5 text-xs text-gray-500 cursor-not-allowed">
+        <Lock className="w-3.5 h-3.5 text-gray-500" />
+        <span>No Account Selected</span>
+      </div>
+    );
+  }
 
   return (
     <div className="relative">

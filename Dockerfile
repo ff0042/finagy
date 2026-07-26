@@ -21,6 +21,7 @@ COPY backend/ /app/backend/
 RUN mkdir -p /app/db
 
 EXPOSE 8000
+EXPOSE 8080
 
-# Run uvicorn server
-CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run uvicorn HTTPS server
+CMD ["uv", "run", "python", "run_server.py"]
