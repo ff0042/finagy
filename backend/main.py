@@ -1,4 +1,14 @@
 
+import sys
+from pathlib import Path
+
+# Ensure root and backend directory are in sys.path
+root_dir = Path(__file__).resolve().parent.parent
+backend_dir = Path(__file__).resolve().parent
+for p in [str(root_dir), str(backend_dir)]:
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,11 +20,18 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from backend.db.database import init_db, execute_query, get_active_account
-from backend.market_data import get_market_data_provider, price_cache
-from backend.schwab_service import schwab_service
-from backend.constants import DEFAULT_USER_ID, DEFAULT_ACCOUNT_ID
-from backend.routers import auth, portfolio, watchlist, llm
+try:
+    from backend.db.database import init_db, execute_query, get_active_account
+    from backend.market_data import get_market_data_provider, price_cache
+    from backend.schwab_service import schwab_service
+    from backend.constants import DEFAULT_USER_ID, DEFAULT_ACCOUNT_ID
+    from backend.routers import auth, portfolio, watchlist, llm
+except ModuleNotFoundError:
+    from db.database import init_db, execute_query, get_active_account
+    from market_data import get_market_data_provider, price_cache
+    from schwab_service import schwab_service
+    from constants import DEFAULT_USER_ID, DEFAULT_ACCOUNT_ID
+    from routers import auth, portfolio, watchlist, llm
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -53,12 +70,9 @@ async def lifespan(app: FastAPI):
     
     logger.info("Starting market data provider...")
     market_provider = get_market_data_provider()
-    market_provider.start()
-    
-    # Seed watchlist into market provider
     wl = execute_query("SELECT ticker FROM watchlist")
-    for r in wl:
-        market_provider.add_ticker(r["ticker"])
+    initial_tickers = [r["ticker"] for r in wl] if wl else DEFAULT_TICKERS
+    market_provider.start(initial_tickers)
         
     global task_ref
     task_ref = asyncio.create_task(snapshot_task())

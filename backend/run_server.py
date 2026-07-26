@@ -1,6 +1,19 @@
 import os
+import sys
 import uvicorn
-from backend.schwab_service import ensure_ssl_certs
+from pathlib import Path
+
+# Ensure both project root and backend directory are in sys.path
+root_dir = Path(__file__).resolve().parent.parent
+backend_dir = Path(__file__).resolve().parent
+for p in [str(root_dir), str(backend_dir)]:
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
+try:
+    from backend.schwab_service import ensure_ssl_certs
+except ModuleNotFoundError:
+    from schwab_service import ensure_ssl_certs
 
 if __name__ == "__main__":
     ensure_ssl_certs()
