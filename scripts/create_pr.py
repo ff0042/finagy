@@ -28,8 +28,8 @@ def create_pr():
             body_content = f.read()
 
     payload = {
-        "title": "feat(v3): Multi-Account Selection & Schwab Developer API Integration",
-        "head": "feature/v3-multi-account-schwab",
+        "title": "refactor(v3.3): Release v3.3 Code Cleanup, Single Source of Truth Isolation, and CI Workflow",
+        "head": "release/v3.3-cleanup",
         "base": "main",
         "body": body_content
     }

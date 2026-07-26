@@ -10,26 +10,9 @@ import PnlChart from './PnlChart';
 import TradeBar from './TradeBar';
 import AIChatPanel from './AIChatPanel';
 import { PriceStreamProvider } from '@/hooks/usePriceStream';
-import { ShieldAlert, ExternalLink, RefreshCw, Lock } from 'lucide-react';
 
 export default function Dashboard() {
   const [selectedTicker, setSelectedTicker] = useState('AAPL');
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  const checkAuth = useCallback(async () => {
-    try {
-      const res = await fetch('/api/schwab/auth-status');
-      if (res.ok) {
-        const data = await res.json();
-        setIsAuthenticated(data.authenticated || false);
-      } else {
-        setIsAuthenticated(false);
-      }
-    } catch (err) {
-      setIsAuthenticated(false);
-    }
-  }, []);
 
   useEffect(() => {
     const initSession = async () => {
@@ -39,45 +22,10 @@ export default function Dashboard() {
           sessionStorage.setItem('finally_session_active', 'true');
         } catch (err) {}
       }
-      checkAuth();
     };
 
     initSession();
-
-    const handleRefresh = () => checkAuth();
-    if (typeof window !== 'undefined') {
-      window.addEventListener('refresh-workstation', handleRefresh);
-    }
-    return () => {
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('refresh-workstation', handleRefresh);
-      }
-    };
-  }, [checkAuth]);
-
-  const handleConnect = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch('/api/schwab/auth-url');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.auth_url) {
-          const width = 600;
-          const height = 700;
-          const left = window.screenX + (window.outerWidth - width) / 2;
-          const top = window.screenY + (window.outerHeight - height) / 2;
-          window.open(
-            data.auth_url,
-            'SchwabAuth',
-            `width=${width},height=${height},left=${left},top=${top},status=no,resizable=yes,scrollbars=yes`
-          );
-        }
-      }
-    } catch (err) {
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, []);
 
   return (
     <PriceStreamProvider>

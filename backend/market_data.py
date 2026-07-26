@@ -7,7 +7,7 @@ import random
 import urllib.request
 import json
 import concurrent.futures
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, List, Set
 
@@ -26,7 +26,7 @@ class PriceCache:
                 "prev_price": prev_price,
                 "change": change,
                 "change_percent": change_percent,
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             }
             
     def get_all(self) -> Dict[str, Any]:
@@ -92,7 +92,7 @@ class SchwabMarketData(BaseMarketData):
 
     def _init_client(self):
         try:
-            from schwab_service import schwab_service
+            from backend.schwab_service import schwab_service
             if schwab_service.get_token_status().get("authenticated"):
                 self.client = schwab_service.client
             else:
@@ -252,7 +252,7 @@ def get_market_data_provider() -> BaseMarketData:
     global _provider_instance
     if _provider_instance is None:
         try:
-            from schwab_service import schwab_service
+            from backend.schwab_service import schwab_service
             if schwab_service.get_token_status().get("authenticated"):
                 _provider_instance = SchwabMarketData()
                 print("[INFO] Initialized Schwab Developer API Market Data Provider.")

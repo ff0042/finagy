@@ -2,7 +2,7 @@ import os
 import json
 import pytest
 from unittest.mock import patch, MagicMock
-from llm.llm_service import process_chat
+from backend.llm.llm_service import process_chat
 
 def test_openrouter_model_selection(monkeypatch):
     """Test that process_chat uses the specified OPENROUTER_MODEL from env."""
@@ -17,7 +17,7 @@ def test_openrouter_model_selection(monkeypatch):
         "watchlist_changes": []
     })
     
-    with patch("llm.llm_service.OpenAI") as mock_openai_cls:
+    with patch("backend.llm.llm_service.OpenAI") as mock_openai_cls:
         mock_client = MagicMock()
         mock_openai_cls.return_value = mock_client
         mock_client.chat.completions.create.return_value = mock_response
@@ -40,7 +40,7 @@ def test_openrouter_error_graceful_fallback(monkeypatch):
     monkeypatch.setenv("OPENROUTER_MODEL", "google/gemini-3.1-pro-preview")
     monkeypatch.setenv("LLM_MOCK", "false")
     
-    with patch("llm.llm_service.OpenAI") as mock_openai_cls:
+    with patch("backend.llm.llm_service.OpenAI") as mock_openai_cls:
         mock_client = MagicMock()
         mock_openai_cls.return_value = mock_client
         mock_client.chat.completions.create.side_effect = Exception("OpenRouter 500 Service Unavailable")
@@ -50,7 +50,7 @@ def test_openrouter_error_graceful_fallback(monkeypatch):
 
 def test_llm_model_selection_endpoints():
     """Test GET /api/llm/models and POST /api/llm/model endpoints."""
-    from main import app
+    from backend.main import app
     from fastapi.testclient import TestClient
     tc = TestClient(app)
     

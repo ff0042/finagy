@@ -1,0 +1,27 @@
+
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Schwab Authorization Successful</title>
+            <style>
+                body { background-color: #0d1117; color: #ffffff; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+                .card { background-color: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 2rem; text-align: center; max-width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+                h2 { color: #2ea043; margin-top: 0; }
+                p { color: #8b949e; font-size: 14px; }
+            </style>
+        </head>
+        <body>
+            <div class="card">
+                <h2>Schwab Connected!</h2>
+                <p>Your authentication tokens have been updated successfully.</p>
+                <p>You can close this window and return to FinAlly workstation.</p>
+            </div>
+            <script>
+                if (window.opener) {
+                    try { window.opener.postMessage("schwab-auth-success", "*"); } catch(e) {}
+                }
+                setTimeout(function() { window.close(); }, 800);
+            </script>
+        </body>
+        </html>
+        

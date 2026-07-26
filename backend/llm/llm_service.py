@@ -1,10 +1,11 @@
+from backend.trade_service import execute_actions
 import json
 import os
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from openai import OpenAI
-from db.database import execute_query, get_active_account
+from backend.db.database import execute_query, get_active_account
 
 SYSTEM_PROMPT = """You are FinAlly, an AI trading workstation assistant.
 You analyze portfolio positions, cash balance, and watchlist prices to execute user requests.
@@ -149,10 +150,21 @@ def get_active_model() -> str:
     global _active_model
     if _active_model:
         return _active_model
+        
     env_model = os.getenv("OPENROUTER_MODEL") or os.getenv("LLM_MODEL")
     if env_model:
         return env_model
-    return "google/gemini-2.5-flash"
+
+    try:
+        from backend.schwab_service import schwab_service
+        is_authed = schwab_service.get_token_status().get("authenticated", False)
+    except Exception:
+        is_authed = False
+
+    if not is_authed:
+        return "mock/deterministic"
+        
+    return "mock/deterministic"
 
 def set_active_model(model_id: str) -> str:
     global _active_model
@@ -199,107 +211,15 @@ def process_chat(user_message: str, portfolio_context: dict, chat_history: list)
     
     execute_query(
         "INSERT INTO chat_messages (id, user_id, role, content, actions, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (str(uuid.uuid4()), "default", "user", user_message, None, datetime.utcnow().isoformat())
+        (str(uuid.uuid4()), "default", "user", user_message, None, datetime.now(timezone.utc).isoformat())
     )
     execute_query(
         "INSERT INTO chat_messages (id, user_id, role, content, actions, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         (str(uuid.uuid4()), "default", "assistant", response_data.get("message", ""), json.dumps({
             "trades": response_data.get("trades", []),
             "watchlist_changes": response_data.get("watchlist_changes", [])
-        }), datetime.utcnow().isoformat())
+        }), datetime.now(timezone.utc).isoformat())
     )
     
     return response_data
 
-def execute_actions(response_data, account_id=None):
-    trades = response_data.get("trades", [])
-    watchlist_changes = response_data.get("watchlist_changes", [])
-    
-    from market_data import get_market_data_provider, price_cache
-    market_provider = get_market_data_provider()
-    
-    if not account_id:
-        active_acct = get_active_account()
-        acct_id = active_acct["id"] if active_acct else "acct_roth"
-    else:
-        acct_id = account_id
-
-    for w in watchlist_changes:
-        ticker = w.get("ticker", "").upper()
-        action = w.get("action", "").lower()
-        if not ticker:
-            continue
-        if action == "add":
-            try:
-                execute_query(
-                    "INSERT INTO watchlist (id, user_id, account_id, ticker, added_at) VALUES (?, ?, ?, ?, ?)",
-                    (str(uuid.uuid4()), "default", acct_id, ticker, datetime.utcnow().isoformat())
-                )
-            except Exception:
-                pass
-            market_provider.add_ticker(ticker)
-        elif action == "remove":
-            execute_query(
-                "DELETE FROM watchlist WHERE user_id = ? AND account_id = ? AND ticker = ?",
-                ("default", acct_id, ticker)
-            )
-            
-    for t in trades:
-        ticker = t.get("ticker", "").upper()
-        side = t.get("side", "").lower()
-        quantity = float(t.get("quantity", 0))
-        
-        if quantity <= 0 or not ticker:
-            continue
-            
-        market_provider.add_ticker(ticker)
-        current_price = price_cache.get(ticker)
-        price = current_price["price"] if current_price else 150.0
-        total_cost = price * quantity
-        
-        active_acct = get_active_account()
-        cash = active_acct["cash_balance"] if active_acct else 10000.0
-        
-        position = execute_query("SELECT quantity, avg_cost FROM positions WHERE user_id = 'default' AND account_id = ? AND ticker = ?", (acct_id, ticker))
-        pos_qty = position[0]["quantity"] if position else 0
-        avg_cost = position[0]["avg_cost"] if position else 0
-        
-        if side == "buy":
-            if cash < total_cost:
-                continue
-            
-            new_cash = cash - total_cost
-            new_qty = pos_qty + quantity
-            new_avg = ((pos_qty * avg_cost) + total_cost) / new_qty if new_qty > 0 else 0
-            
-            execute_query("UPDATE accounts SET cash_balance = ? WHERE id = ?", (new_cash, acct_id))
-            execute_query("UPDATE users_profile SET cash_balance = ? WHERE id = 'default'", (new_cash,))
-            
-            if position:
-                execute_query("UPDATE positions SET quantity = ?, avg_cost = ?, updated_at = ? WHERE user_id = 'default' AND account_id = ? AND ticker = ?",
-                              (new_qty, new_avg, datetime.utcnow().isoformat(), acct_id, ticker))
-            else:
-                execute_query("INSERT INTO positions (id, user_id, account_id, ticker, quantity, avg_cost, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                              (str(uuid.uuid4()), "default", acct_id, ticker, new_qty, new_avg, datetime.utcnow().isoformat()))
-                              
-            execute_query("INSERT INTO trades (id, user_id, account_id, ticker, side, quantity, price, executed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                          (str(uuid.uuid4()), "default", acct_id, ticker, side, quantity, price, datetime.utcnow().isoformat()))
-                          
-        elif side == "sell":
-            if pos_qty < quantity:
-                continue
-                
-            new_cash = cash + total_cost
-            new_qty = pos_qty - quantity
-            
-            execute_query("UPDATE accounts SET cash_balance = ? WHERE id = ?", (new_cash, acct_id))
-            execute_query("UPDATE users_profile SET cash_balance = ? WHERE id = 'default'", (new_cash,))
-            
-            if new_qty > 0:
-                execute_query("UPDATE positions SET quantity = ?, updated_at = ? WHERE user_id = 'default' AND account_id = ? AND ticker = ?",
-                              (new_qty, datetime.utcnow().isoformat(), acct_id, ticker))
-            else:
-                execute_query("DELETE FROM positions WHERE user_id = 'default' AND account_id = ? AND ticker = ?", (acct_id, ticker))
-                
-            execute_query("INSERT INTO trades (id, user_id, account_id, ticker, side, quantity, price, executed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                          (str(uuid.uuid4()), "default", acct_id, ticker, side, quantity, price, datetime.utcnow().isoformat()))
