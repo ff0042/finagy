@@ -19,8 +19,8 @@
             <script>
                 if (window.opener) {
                     try { window.opener.postMessage("schwab-auth-success", "*"); } catch(e) {}
-                    setTimeout(() => window.close(), 2500);
                 }
+                setTimeout(function() { window.close(); }, 800);
             </script>
         </body>
         </html>

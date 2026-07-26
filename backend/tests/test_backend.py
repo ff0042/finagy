@@ -11,8 +11,11 @@ from backend.market_data import price_cache
 
 client = TestClient(app)
 
+from backend.schwab_service import schwab_service
+
 @pytest.fixture(autouse=True)
 def setup_db():
+    schwab_service.disconnect()
     init_db()
     for table in ["chat_messages", "portfolio_snapshots", "trades", "positions", "watchlist", "users_profile", "accounts"]:
         execute_query(f"DELETE FROM {table}")

@@ -28,11 +28,11 @@ export default function AIChatPanel() {
     };
 
     if (typeof window !== 'undefined') {
-      window.addEventListener('refresh-workstation', handleResetChat);
+      window.addEventListener('reset-chat', handleResetChat);
     }
     return () => {
       if (typeof window !== 'undefined') {
-        window.removeEventListener('refresh-workstation', handleResetChat);
+        window.removeEventListener('reset-chat', handleResetChat);
       }
     };
   }, []);

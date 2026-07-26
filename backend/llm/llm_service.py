@@ -150,10 +150,21 @@ def get_active_model() -> str:
     global _active_model
     if _active_model:
         return _active_model
+        
     env_model = os.getenv("OPENROUTER_MODEL") or os.getenv("LLM_MODEL")
     if env_model:
         return env_model
-    return "google/gemini-2.5-flash"
+
+    try:
+        from backend.schwab_service import schwab_service
+        is_authed = schwab_service.get_token_status().get("authenticated", False)
+    except Exception:
+        is_authed = False
+
+    if not is_authed:
+        return "mock/deterministic"
+        
+    return "mock/deterministic"
 
 def set_active_model(model_id: str) -> str:
     global _active_model

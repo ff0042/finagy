@@ -1,13 +1,18 @@
 
 import sys
 from pathlib import Path
+from dotenv import load_dotenv
 
-# Ensure root and backend directory are in sys.path
+# Ensure root and backend directory are in sys.path and load environment variables from .env
 root_dir = Path(__file__).resolve().parent.parent
 backend_dir = Path(__file__).resolve().parent
 for p in [str(root_dir), str(backend_dir)]:
     if p not in sys.path:
         sys.path.insert(0, p)
+
+# Load .env file from root or backend directory
+load_dotenv(root_dir / ".env")
+load_dotenv(backend_dir / ".env")
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -65,6 +70,14 @@ task_ref = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    loop = asyncio.get_running_loop()
+    def handle_exception(loop, context):
+        exc = context.get("exception")
+        if isinstance(exc, (ConnectionResetError, ConnectionAbortedError)) or (isinstance(exc, OSError) and getattr(exc, "winerror", None) == 10054):
+            return
+        loop.default_exception_handler(context)
+    loop.set_exception_handler(handle_exception)
+
     logger.info("Initializing database...")
     init_db()
     
@@ -103,8 +116,12 @@ app.include_router(llm.router)
 def health():
     return {'status': 'ok'}
 
+from fastapi import Request
+
 @app.get("/")
-def read_root():
+def read_root(request: Request):
+    if request.query_params.get("code") or request.query_params.get("error"):
+        return auth.schwab_callback(request)
     if os.path.exists("static/index.html"):
         return FileResponse("static/index.html")
     elif os.path.exists("/app/static/index.html"):

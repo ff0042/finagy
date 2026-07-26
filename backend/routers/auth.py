@@ -34,33 +34,32 @@ def schwab_callback(request: Request):
     if not code:
         return _render_html(False, "No auth code provided by Schwab")
         
-    res = schwab_service.exchange_code_for_token(code)
+    res = schwab_service.exchange_code_for_tokens(code)
     
     if res.get("success"):
         try:
-            acct_res = schwab_service.get_account_numbers()
-            if acct_res.get("success") and acct_res.get("data"):
-                accounts = acct_res["data"]
-                now = datetime.now(timezone.utc).isoformat()
-                for i, acc in enumerate(accounts):
-                    acc_hash = acc.get("hashValue")
-                    acc_num = acc.get("accountNumber")
+            accounts = schwab_service.get_linked_accounts()
+            now = datetime.now(timezone.utc).isoformat()
+            for i, acc in enumerate(accounts):
+                acc_hash = acc.get("account_hash")
+                acc_num = acc.get("account_number")
+                acct_id = acc.get("id")
+                name = acc.get("name")
+                cash_bal = acc.get("cash_balance", INITIAL_CASH_BALANCE)
+                
+                if not acc_hash:
+                    continue
                     
-                    if not acc_hash:
-                        continue
-                        
-                    acct_id = f"schwab_{acc_hash[:8]}"
-                    
-                    rows = execute_query("SELECT id FROM accounts WHERE account_hash = ?", (acc_hash,))
-                    if rows:
-                        execute_query("UPDATE accounts SET is_active = ? WHERE account_hash = ?", (1 if i == 0 else 0, acc_hash))
-                    else:
-                        execute_query(
-                            "INSERT INTO accounts (id, user_id, account_number, account_hash, name, type, is_active, cash_balance, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                            (acct_id, DEFAULT_USER_ID, acc_num, acc_hash, f"Schwab - {acc_num[-4:]}", "SCHWAB", 1 if i == 0 else 0, INITIAL_CASH_BALANCE, now)
-                        )
-                    if i == 0:
-                        set_active_account(rows[0]["id"] if rows else acct_id)
+                rows = execute_query("SELECT id FROM accounts WHERE account_hash = ?", (acc_hash,))
+                if rows:
+                    execute_query("UPDATE accounts SET is_active = ? WHERE account_hash = ?", (1 if i == 0 else 0, acc_hash))
+                else:
+                    execute_query(
+                        "INSERT INTO accounts (id, user_id, account_number, account_hash, name, type, is_active, cash_balance, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (acct_id, DEFAULT_USER_ID, acc_num, acc_hash, name, "SCHWAB", 1 if i == 0 else 0, cash_bal, now)
+                    )
+                if i == 0:
+                    set_active_account(rows[0]["id"] if rows else acct_id)
         except Exception as e:
             logger.error(f"Failed to sync Schwab accounts: {e}")
             
@@ -78,11 +77,29 @@ def reset_session():
     reset_session_state()
     return {"status": "ok"}
 
+from pathlib import Path
+
 def _render_html(success, error_msg):
-    try:
-        with open("backend/templates/schwab_success.html", "r") as f:
-            template = f.read()
-            return HTMLResponse(content=template)
-    except Exception:
-        # Fallback simple HTML
-        return HTMLResponse(content=f"<html><body>{'Success' if success else 'Error: ' + error_msg}</body></html>")
+    template_path = Path(__file__).resolve().parent.parent / "templates" / "schwab_success.html"
+    if template_path.exists():
+        try:
+            with open(template_path, "r", encoding="utf-8") as f:
+                template = f.read()
+                return HTMLResponse(content=template)
+        except Exception as e:
+            logger.error(f"Failed to read schwab_success.html: {e}")
+            
+    # Self-contained fallback HTML that notifies opener and closes popup automatically
+    script = """
+    <script>
+        if (window.opener) {
+            try { window.opener.postMessage("schwab-auth-success", "*"); } catch(e) {}
+        }
+        setTimeout(function() { window.close(); }, 800);
+    </script>
+    """
+    if success:
+        content = f"<html><body style='background:#0d1117;color:#fff;font-family:sans-serif;text-align:center;padding-top:20%;'><h2>Schwab Connected!</h2><p>Closing window...</p>{script}</body></html>"
+    else:
+        content = f"<html><body style='background:#0d1117;color:#fff;font-family:sans-serif;text-align:center;padding-top:20%;'><h2 style='color:#f85149;'>Connection Failed</h2><p>{error_msg}</p>{script}</body></html>"
+    return HTMLResponse(content=content)

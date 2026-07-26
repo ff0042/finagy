@@ -47,7 +47,7 @@ def execute_actions(response_data, account_id=None):
                 (DEFAULT_USER_ID, acct_id, ticker)
             )
             
-    is_schwab = schwab_service.get_token_status().get("authenticated", False) and acct_hash
+    is_schwab = (acct_type == "SCHWAB") and schwab_service.get_token_status().get("authenticated", False) and acct_hash
 
     # Process Trades
     for t in trades:

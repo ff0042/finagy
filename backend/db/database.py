@@ -16,7 +16,9 @@ else:
 DB_PATH = DB_DIR / "finally.db"
 
 def get_connection():
-    return sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
+    return conn
 
 def init_db():
     os.makedirs(DB_PATH.parent, exist_ok=True)
@@ -150,7 +152,8 @@ def execute_query(query, params=()):
         cursor.execute(query, params)
         if not query.strip().upper().startswith("SELECT"):
             conn.commit()
-        return cursor.fetchall()
+        rows = cursor.fetchall()
+        return [dict(r) for r in rows]
 
 def get_active_account():
     rows = execute_query("SELECT * FROM accounts WHERE is_active = 1 LIMIT 1")

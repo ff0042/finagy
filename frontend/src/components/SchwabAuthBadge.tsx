@@ -32,6 +32,7 @@ export default function SchwabAuthBadge() {
       if (event.data === 'schwab-auth-success') {
         checkStatus();
         if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('reset-chat'));
           window.dispatchEvent(new CustomEvent('refresh-workstation'));
         }
       }
@@ -74,6 +75,7 @@ export default function SchwabAuthBadge() {
       await fetch('/api/schwab/disconnect', { method: 'POST' });
       setAuthStatus({ authenticated: false });
       if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('reset-chat'));
         window.dispatchEvent(new CustomEvent('refresh-workstation'));
       }
     } catch (err) {

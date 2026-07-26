@@ -7,6 +7,7 @@ import sqlite3
 import base64
 import requests
 import datetime
+import time
 import logging
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
@@ -79,6 +80,9 @@ class SchwabService:
     
     def __init__(self):
         self.client = None
+        self._linked_accts_cache = None
+        self._linked_accts_ts = 0.0
+        self._acct_details_cache = {}
         self._init_client()
 
     def _init_client(self):
@@ -317,6 +321,11 @@ class SchwabService:
         """Fetch linked accounts via client.linked_accounts() and hydrate real cash balances."""
         if not self.client:
             return []
+            
+        now_time = time.time()
+        if self._linked_accts_cache is not None and (now_time - self._linked_accts_ts) < 10.0:
+            return self._linked_accts_cache
+
         try:
             fetch_fn = getattr(self.client, 'linked_accounts', getattr(self.client, 'account_linked', None))
             if not fetch_fn: return []
@@ -347,6 +356,8 @@ class SchwabService:
                         "is_active": 1 if idx == 0 else 0,
                         "cash_balance": cash_bal
                     })
+                self._linked_accts_cache = accounts
+                self._linked_accts_ts = now_time
                 return accounts
         except Exception as e:
             print(f"[WARN] Error fetching linked accounts: {e}")
@@ -356,10 +367,19 @@ class SchwabService:
         """Fetch account positions and balances via client.account_details()."""
         if not self.client:
             return None
+
+        now_time = time.time()
+        if account_hash in self._acct_details_cache:
+            ts, cached_data = self._acct_details_cache[account_hash]
+            if (now_time - ts) < 10.0:
+                return cached_data
+
         try:
             resp = self.client.account_details(account_hash, fields="positions")
             if resp and resp.status_code == 200:
-                return resp.json()
+                data = resp.json()
+                self._acct_details_cache[account_hash] = (now_time, data)
+                return data
         except Exception as e:
             print(f"[WARN] Error fetching account details: {e}")
         return None

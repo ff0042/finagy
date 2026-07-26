@@ -14,7 +14,22 @@ router = APIRouter()
 
 @router.get("/api/accounts")
 def get_accounts():
-    return list_accounts()
+    schwab_connected = schwab_service.get_token_status().get("authenticated", False)
+    all_accts = list_accounts()
+    
+    if schwab_connected:
+        schwab_accts = [a for a in all_accts if a.get("type") == "SCHWAB"]
+        if schwab_accts:
+            if not any(a.get("is_active") == 1 for a in schwab_accts):
+                set_active_account(schwab_accts[0]["id"])
+                schwab_accts = [a for a in list_accounts() if a.get("type") == "SCHWAB"]
+            return schwab_accts
+            
+    local_accts = [a for a in all_accts if a.get("type") != "SCHWAB"]
+    if local_accts and not any(a.get("is_active") == 1 for a in local_accts):
+        set_active_account(local_accts[0]["id"])
+        local_accts = [a for a in list_accounts() if a.get("type") != "SCHWAB"]
+    return local_accts
 
 class AccountSelectRequest(BaseModel):
     account_id: str
