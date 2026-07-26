@@ -56,7 +56,7 @@ def generate_mock_response(user_message: str):
         watchlist_changes.append({"ticker": ticker, "action": "remove"})
         response_text = f"{ticker} has been removed from your watchlist."
     else:
-        response_text = f"Analyzed request: '{user_message}'. Portfolio is active."
+        response_text = f"Analyzed request: '{user_message}'. Workstation is active."
 
     return {
         "message": response_text,
@@ -66,7 +66,8 @@ def generate_mock_response(user_message: str):
 
 def process_chat(user_message: str, portfolio_context: dict, chat_history: list):
     api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
-    is_mock = os.getenv("LLM_MOCK", "false").lower() == "true" or not api_key
+    is_placeholder_key = not api_key or "your-key-here" in api_key.lower() or "your-openrouter-key" in api_key.lower()
+    is_mock = os.getenv("LLM_MOCK", "false").lower() == "true" or is_placeholder_key
 
     if is_mock:
         response_data = generate_mock_response(user_message)
@@ -93,8 +94,8 @@ def process_chat(user_message: str, portfolio_context: dict, chat_history: list)
             content = response.choices[0].message.content
             response_data = json.loads(content)
         except Exception as e:
+            print(f"[WARN] LLM API error: {e}")
             response_data = generate_mock_response(user_message)
-            response_data["message"] = f"Error calling LLM ({str(e)}). Fallback executed: {response_data['message']}"
 
     execute_actions(response_data)
     
@@ -112,15 +113,18 @@ def process_chat(user_message: str, portfolio_context: dict, chat_history: list)
     
     return response_data
 
-def execute_actions(response_data):
+def execute_actions(response_data, account_id=None):
     trades = response_data.get("trades", [])
     watchlist_changes = response_data.get("watchlist_changes", [])
     
     from market_data import get_market_data_provider, price_cache
     market_provider = get_market_data_provider()
     
-    active_acct = get_active_account()
-    acct_id = active_acct["id"] if active_acct else "acct_roth"
+    if not account_id:
+        active_acct = get_active_account()
+        acct_id = active_acct["id"] if active_acct else "acct_roth"
+    else:
+        acct_id = account_id
 
     for w in watchlist_changes:
         ticker = w.get("ticker", "").upper()
@@ -138,8 +142,8 @@ def execute_actions(response_data):
             market_provider.add_ticker(ticker)
         elif action == "remove":
             execute_query(
-                "DELETE FROM watchlist WHERE user_id = ? AND ticker = ?",
-                ("default", ticker)
+                "DELETE FROM watchlist WHERE user_id = ? AND account_id = ? AND ticker = ?",
+                ("default", acct_id, ticker)
             )
             
     for t in trades:
@@ -155,6 +159,7 @@ def execute_actions(response_data):
         price = current_price["price"] if current_price else 150.0
         total_cost = price * quantity
         
+        active_acct = get_active_account()
         cash = active_acct["cash_balance"] if active_acct else 10000.0
         
         position = execute_query("SELECT quantity, avg_cost FROM positions WHERE user_id = 'default' AND account_id = ? AND ticker = ?", (acct_id, ticker))

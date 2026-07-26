@@ -61,11 +61,13 @@ async def startup_event():
             ON CONFLICT(id) DO UPDATE SET account_hash=excluded.account_hash, cash_balance=excluded.cash_balance
             """, (sa["id"], "default", sa["account_number"], sa["account_hash"], sa["name"], sa["type"], 1 if idx == 0 else 0, sa["cash_balance"], now))
 
-    # Get watchlist tickers
-    watchlist = execute_query("SELECT ticker FROM watchlist WHERE user_id = 'default'")
+    # Get active watchlist tickers
+    active = get_active_account()
+    acct_id = active["id"] if active else "default"
+    watchlist = execute_query("SELECT ticker FROM watchlist WHERE user_id = 'default' AND account_id = ?", (acct_id,))
     tickers = [row["ticker"] for row in watchlist]
     if not tickers:
-        tickers = ["AAPL", "GOOGL", "MSFT"]
+        tickers = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA", "NVDA", "META", "JPM", "V", "NFLX"]
     market_provider.start(tickers)
     
     asyncio.create_task(snapshot_task())
@@ -144,7 +146,6 @@ def get_accounts():
     if schwab_connected:
         schwab_accts = [a for a in accounts if a["type"] == "SCHWAB"]
         if not schwab_accts:
-            # Refresh from service
             new_sa = schwab_service.get_linked_accounts()
             if new_sa:
                 now = datetime.utcnow().isoformat()
@@ -158,7 +159,6 @@ def get_accounts():
                 schwab_accts = [a for a in accounts if a["type"] == "SCHWAB"]
                 
         if schwab_accts:
-            # Ensure one account is marked active
             if not any(a.get("is_active") == 1 for a in schwab_accts):
                 active_id = schwab_accts[0]["id"]
                 set_active_account(active_id)
@@ -305,7 +305,25 @@ def get_history():
 
 @app.get("/api/watchlist")
 def get_watchlist():
-    wl = execute_query("SELECT ticker FROM watchlist WHERE user_id = 'default'")
+    active = get_active_account()
+    acct_id = active["id"] if active else "default"
+    
+    wl = execute_query("SELECT ticker FROM watchlist WHERE user_id = 'default' AND account_id = ?", (acct_id,))
+    
+    # If no custom watchlist exists for this active account yet, seed default starter tickers!
+    if not wl:
+        default_tickers = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA", "NVDA", "META", "JPM", "V", "NFLX"]
+        now = datetime.utcnow().isoformat()
+        for ticker in default_tickers:
+            try:
+                execute_query(
+                    "INSERT INTO watchlist (id, user_id, account_id, ticker, added_at) VALUES (?, ?, ?, ?, ?)",
+                    (str(uuid.uuid4()), "default", acct_id, ticker, now)
+                )
+            except Exception:
+                pass
+        wl = execute_query("SELECT ticker FROM watchlist WHERE user_id = 'default' AND account_id = ?", (acct_id,))
+        
     res = []
     for row in wl:
         ticker = row["ticker"]
@@ -321,16 +339,20 @@ class WatchlistRequest(BaseModel):
 
 @app.post("/api/watchlist")
 def add_watchlist(req: WatchlistRequest):
+    active = get_active_account()
+    acct_id = active["id"] if active else "default"
     execute_actions({
         "watchlist_changes": [{"ticker": req.ticker, "action": "add"}]
-    })
+    }, account_id=acct_id)
     return {"status": "ok"}
 
 @app.delete("/api/watchlist/{ticker}")
 def remove_watchlist(ticker: str):
+    active = get_active_account()
+    acct_id = active["id"] if active else "default"
     execute_actions({
         "watchlist_changes": [{"ticker": ticker, "action": "remove"}]
-    })
+    }, account_id=acct_id)
     return {"status": "ok"}
 
 class ChatRequest(BaseModel):

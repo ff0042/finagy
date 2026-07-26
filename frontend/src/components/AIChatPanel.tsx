@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { Send, Bot, User, Zap, Loader2 } from 'lucide-react';
 
 interface ChatMessage {
@@ -15,6 +15,7 @@ interface ChatMessage {
 export default function AIChatPanel() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([
     { role: 'assistant', text: 'Hello! I am FinAlly, your AI trading copilot. How can I help with your portfolio or watchlist today?' }
   ]);
@@ -48,7 +49,6 @@ export default function AIChatPanel() {
         actions 
       }]);
 
-      // If trades or watchlist changes occurred, trigger global workstation refresh event
       if ((actions.trades && actions.trades.length > 0) || (actions.watchlist_changes && actions.watchlist_changes.length > 0)) {
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('refresh-workstation'));
@@ -61,6 +61,9 @@ export default function AIChatPanel() {
       }]);
     } finally {
       setLoading(false);
+      setTimeout(() => {
+        inputRef.current?.focus();
+      }, 50);
     }
   };
 
@@ -135,6 +138,7 @@ export default function AIChatPanel() {
         </div>
         <form onSubmit={submit} className="relative">
           <input 
+            ref={inputRef}
             type="text" 
             value={input}
             onChange={e => setInput(e.target.value)}
