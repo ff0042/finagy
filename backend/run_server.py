@@ -1,6 +1,6 @@
 import os
 import uvicorn
-from schwab_service import ensure_ssl_certs
+from backend.schwab_service import ensure_ssl_certs
 
 if __name__ == "__main__":
     ensure_ssl_certs()

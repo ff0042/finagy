@@ -46,6 +46,7 @@ def ensure_ssl_certs():
             x509.DNSName("localhost")
         ])
 
+        now = datetime.datetime.now(datetime.timezone.utc)
         cert = x509.CertificateBuilder().subject_name(
             name
         ).issuer_name(
@@ -55,9 +56,9 @@ def ensure_ssl_certs():
         ).serial_number(
             x509.random_serial_number()
         ).not_valid_before(
-            datetime.datetime.utcnow() - datetime.timedelta(days=1)
+            now - datetime.timedelta(days=1)
         ).not_valid_after(
-            datetime.datetime.utcnow() + datetime.timedelta(days=365)
+            now + datetime.timedelta(days=365)
         ).add_extension(
             san, critical=False
         ).sign(key, hashes.SHA256())

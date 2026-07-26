@@ -73,3 +73,13 @@ $env:PYTHONPATH="."; uv run pytest
 * **Test File**: [ModelSelector.tsx](file:///c:/Users/ullul/PycharmProjects/finagy/frontend/src/components/ModelSelector.tsx#L100)
 * **Test Cases**:
   * Disconnected state automatically locks active model to `mock/deterministic` and disables non-free models.
+
+### 8. Release v3.3 Codebase Cleanup & Single Source of Truth Isolation
+* **Type**: Major Refactoring & Technical Debt Reduction
+* **Date Added**: 2026-07-26
+* **Description**: Extracted `execute_actions()` to `trade_service.py` to strictly enforce the Single Source of Truth rule (Schwab API only for Schwab accounts; DB transactions for local accounts). Modularized `main.py` into FastAPI routers (`routers/auth.py`, `routers/portfolio.py`, `routers/watchlist.py`, `routers/llm.py`). Created centralized constants (`constants.py`), types (`types/index.ts`), API wrapper (`lib/api.ts`), AuthContext (`AuthContext.tsx`), and event listener hook (`useWorkstationRefresh.ts`). Migrated FastAPI to `lifespan` context manager.
+* **Test Files**: [test_trades.py](file:///c:/Users/ullul/PycharmProjects/finagy/backend/tests/test_trades.py), [test_backend.py](file:///c:/Users/ullul/PycharmProjects/finagy/backend/tests/test_backend.py), [test_llm_fallback.py](file:///c:/Users/ullul/PycharmProjects/finagy/backend/tests/test_llm_fallback.py)
+* **Test Cases**:
+  * `test_execute_actions_buy_sell_local`: Verifies local trade executions deduct cash and update positions atomically.
+  * `test_execute_actions_insufficient_funds`: Verifies trade rejection when cash balance is lower than total purchase price.
+  * `test_session_reset_endpoint`: Verifies `POST /api/session/reset` resets disconnected state cleanly.

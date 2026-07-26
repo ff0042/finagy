@@ -24,12 +24,9 @@ export default function ModelSelector() {
         const data = await res.json();
         const authed = !!data.authenticated;
         setIsConnected(authed);
-        if (!authed && activeModel !== 'mock/deterministic') {
-          selectModel('mock/deterministic');
-        }
       }
     } catch (err) {}
-  }, [activeModel]);
+  }, []);
 
   const fetchModels = async () => {
     try {

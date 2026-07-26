@@ -5,9 +5,9 @@ from fastapi.testclient import TestClient
 # Set mock environment for tests before importing main
 os.environ["LLM_MOCK"] = "true"
 
-from main import app
-from db.database import init_db, execute_query, DB_PATH
-from market_data import price_cache
+from backend.main import app
+from backend.db.database import init_db, execute_query, DB_PATH
+from backend.market_data import price_cache
 
 client = TestClient(app)
 

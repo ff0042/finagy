@@ -1,67 +1,53 @@
 'use client';
 
 import { usePriceStream } from '@/hooks/usePriceStream';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import AccountSelector from './AccountSelector';
 import SchwabAuthBadge from './SchwabAuthBadge';
 import ModelSelector from './ModelSelector';
+import { useAuthStatus } from '../contexts/AuthContext';
+import { useWorkstationRefresh } from '../hooks/useWorkstationRefresh';
+import { fetchApi } from '../lib/api';
+import { Portfolio, Position } from '../types';
 
 export default function Header() {
   const { status, prices } = usePriceStream();
-  const [portfolio, setPortfolio] = useState({ cash_balance: 0.0, total_value: 0.0, positions: [] as any[] });
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-
-  const fetchAuthStatus = useCallback(async () => {
-    try {
-      const res = await fetch('/api/schwab/auth-status');
-      if (res.ok) {
-        const data = await res.json();
-        setIsAuthenticated(data.authenticated || false);
-      }
-    } catch (err) {
-      setIsAuthenticated(false);
-    }
-  }, []);
+  const [portfolio, setPortfolio] = useState<Portfolio>({
+    account: null,
+    cash_balance: 0.0,
+    total_value: 0.0,
+    positions: [],
+    total_pnl: 0.0,
+  });
 
   const fetchPortfolio = useCallback(async () => {
     try {
-      const res = await fetch('/api/portfolio');
-      if (res.ok) {
-        const data = await res.json();
-        setPortfolio(data);
-      }
-    } catch (err) {}
+      const data = await fetchApi<Portfolio>('/api/portfolio');
+      setPortfolio(data);
+    } catch (err) {
+      console.error('Failed to fetch portfolio:', err);
+    }
   }, []);
 
   useEffect(() => {
-    fetchAuthStatus();
     fetchPortfolio();
+  }, [fetchPortfolio]);
 
-    const handleRefresh = () => {
-      fetchAuthStatus();
-      fetchPortfolio();
-    };
+  useWorkstationRefresh(fetchPortfolio);
 
-    if (typeof window !== 'undefined') {
-      window.addEventListener('refresh-workstation', handleRefresh);
+  const { liveTotalValue, liveCash } = useMemo(() => {
+    let livePosValue = 0;
+    if (portfolio.positions) {
+      portfolio.positions.forEach((p: Position) => {
+        const cp = prices[p.ticker]?.price || p.current_price || p.avg_cost;
+        livePosValue += cp * p.quantity;
+      });
     }
-    return () => {
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('refresh-workstation', handleRefresh);
-      }
-    };
-  }, [fetchAuthStatus, fetchPortfolio]);
-
-  let livePosValue = 0;
-  if (portfolio.positions) {
-    portfolio.positions.forEach((p: any) => {
-      const cp = prices[p.ticker]?.price || p.current_price || p.avg_cost;
-      livePosValue += cp * p.quantity;
-    });
-  }
-
-  const liveCash = portfolio.cash_balance !== undefined ? portfolio.cash_balance : 10000.0;
-  const liveTotalValue = portfolio.positions && portfolio.positions.length > 0 ? (liveCash + livePosValue) : (portfolio.total_value !== undefined ? portfolio.total_value : liveCash);
+    const liveCash = portfolio.cash_balance !== undefined ? portfolio.cash_balance : 0.0;
+    const liveTotalValue = portfolio.positions && portfolio.positions.length > 0 ? (liveCash + livePosValue) : (portfolio.total_value !== undefined ? portfolio.total_value : liveCash);
+    
+    return { liveTotalValue, liveCash };
+  }, [portfolio, prices]);
 
   return (
     <header className="flex flex-wrap items-center justify-between p-4 bg-card rounded-lg mb-4 gap-4">
