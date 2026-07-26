@@ -21,6 +21,15 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+# Sync frontend static build to backend/static if out directory exists
+$FrontendOut = Join-Path $ProjectDir "frontend\out"
+$BackendStatic = Join-Path $ProjectDir "backend\static"
+if (Test-Path $FrontendOut) {
+    Write-Host "[SYNC] Syncing frontend build to backend/static..." -ForegroundColor Yellow
+    if (Test-Path $BackendStatic) { Remove-Item -Recurse -Force $BackendStatic | Out-Null }
+    Copy-Item -Recurse -Force $FrontendOut $BackendStatic | Out-Null
+}
+
 # Build image
 Write-Host "[BUILD] Building Docker image ($ImageName)..." -ForegroundColor Yellow
 docker build -t $ImageName $ProjectDir

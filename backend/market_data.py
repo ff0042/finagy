@@ -91,27 +91,13 @@ class SchwabMarketData(BaseMarketData):
         self._init_client()
 
     def _init_client(self):
-        app_key = os.getenv("SCHWAB_CLIENT_ID") or os.getenv("SCHWAB_APP_KEY")
-        app_secret = os.getenv("SCHWAB_CLIENT_SECRET") or os.getenv("SCHWAB_APP_SECRET")
-        callback_url = os.getenv("SCHWAB_REDIRECT_URI", "https://127.0.0.1:8080")
-        tokens_db = os.getenv("SCHWAB_TOKENS_DB", "db/tokens.db")
-
-        if not app_key or not app_secret:
-            raise ValueError("Schwab API credentials missing (SCHWAB_CLIENT_ID / SCHWAB_CLIENT_SECRET)")
-
-        tokens_path = Path(tokens_db)
-        tokens_path.parent.mkdir(parents=True, exist_ok=True)
-
         try:
-            import schwabdev
-            self.client = schwabdev.Client(
-                app_key=app_key,
-                app_secret=app_secret,
-                callback_url=callback_url,
-                tokens_db=str(tokens_path)
-            )
-        except Exception as e:
-            print(f"[WARN] schwabdev client initialization error: {e}")
+            from schwab_service import schwab_service
+            if schwab_service.get_token_status().get("authenticated"):
+                self.client = schwab_service.client
+            else:
+                self.client = None
+        except Exception:
             self.client = None
 
     def start(self, tickers: List[str]):
@@ -220,11 +206,11 @@ class GBMMarketSimulator(BaseMarketData):
                     current = price
                 else:
                     current = cp["price"]
-
-                shock = random.gauss(0, 1) + sector_shock
-                drift = (mu - 0.5 * sigma**2) * dt
-                volatility = sigma * math.sqrt(dt) * shock
-                new_price = max(0.01, current * math.exp(drift + volatility))
+                
+                # Geometric Brownian Motion step with sector shock
+                dW = random.gauss(0, 1) * math.sqrt(dt)
+                dS = current * (mu * dt + sigma * dW + sector_shock)
+                new_price = max(0.01, current + dS)
                 price_cache.update(ticker, round(new_price, 2))
                 
             time.sleep(0.5)
@@ -233,9 +219,9 @@ class MassiveMarketData(BaseMarketData):
     def __init__(self, api_key: str):
         self.api_key = api_key
         self.running = False
-        self.tickers: Set[str] = set()
         self._lock = threading.Lock()
-        
+        self.tickers: Set[str] = set()
+
     def start(self, tickers: List[str]):
         with self._lock:
             self.tickers = set(t.upper() for t in tickers)
@@ -248,15 +234,8 @@ class MassiveMarketData(BaseMarketData):
         with self._lock:
             if ticker not in self.tickers:
                 self.tickers.add(ticker)
-                price = fetch_real_market_price(ticker)
-                price_cache.update(ticker, price)
-        
+
     def _poll(self):
-        with self._lock:
-            active_list = list(self.tickers)
-        for ticker in active_list:
-            price = fetch_real_market_price(ticker)
-            price_cache.update(ticker, price)
         while self.running:
             with self._lock:
                 active_list = list(self.tickers)
@@ -272,19 +251,15 @@ _provider_instance = None
 def get_market_data_provider() -> BaseMarketData:
     global _provider_instance
     if _provider_instance is None:
-        mock_mode = os.getenv("LLM_MOCK", "false").lower() == "true"
-        schwab_key = os.getenv("SCHWAB_CLIENT_ID") or os.getenv("SCHWAB_APP_KEY")
-        
-        # When LLM_MOCK is false and Schwab key is available, use Schwab Developer API
-        if not mock_mode and schwab_key:
-            try:
+        try:
+            from schwab_service import schwab_service
+            if schwab_service.get_token_status().get("authenticated"):
                 _provider_instance = SchwabMarketData()
                 print("[INFO] Initialized Schwab Developer API Market Data Provider.")
-            except Exception as e:
-                print(f"[WARN] Failed to initialize Schwab Market Data ({e}). Falling back to live simulator.")
+            elif os.getenv("MASSIVE_API_KEY"):
+                _provider_instance = MassiveMarketData(os.getenv("MASSIVE_API_KEY"))
+            else:
                 _provider_instance = GBMMarketSimulator()
-        elif os.getenv("MASSIVE_API_KEY"):
-            _provider_instance = MassiveMarketData(os.getenv("MASSIVE_API_KEY"))
-        else:
+        except Exception:
             _provider_instance = GBMMarketSimulator()
     return _provider_instance

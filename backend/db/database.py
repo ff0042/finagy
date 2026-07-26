@@ -4,10 +4,15 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-DB_PATH = Path(r"c:\Users\ullul\PycharmProjects\finagy\db\finally.db")
+if os.path.exists("/app/db"):
+    DB_DIR = Path("/app/db")
+else:
+    DB_DIR = Path(__file__).parent.parent.parent / "db"
+
+DB_PATH = DB_DIR / "finally.db"
 
 def get_connection():
-    return sqlite3.connect(DB_PATH)
+    return sqlite3.connect(str(DB_PATH))
 
 def init_db():
     os.makedirs(DB_PATH.parent, exist_ok=True)
@@ -164,3 +169,37 @@ def set_active_account(account_id: str):
 def list_accounts():
     rows = execute_query("SELECT * FROM accounts ORDER BY is_active DESC, name ASC")
     return [dict(r) for r in rows]
+
+def reset_session_state(account_id: str = None):
+    now = datetime.utcnow().isoformat()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        if account_id:
+            cursor.execute("UPDATE accounts SET cash_balance = 10000.0 WHERE id = ?", (account_id,))
+            cursor.execute("DELETE FROM positions WHERE account_id = ?", (account_id,))
+            cursor.execute("DELETE FROM trades WHERE account_id = ?", (account_id,))
+            cursor.execute("DELETE FROM portfolio_snapshots WHERE account_id = ?", (account_id,))
+            cursor.execute("DELETE FROM watchlist WHERE account_id = ?", (account_id,))
+            
+            default_tickers = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA", "NVDA", "META", "JPM", "V", "NFLX"]
+            for ticker in default_tickers:
+                cursor.execute(
+                    "INSERT INTO watchlist (id, user_id, account_id, ticker, added_at) VALUES (?, ?, ?, ?, ?)",
+                    (str(uuid.uuid4()), "default", account_id, ticker, now)
+                )
+            cursor.execute("DELETE FROM chat_messages;")
+        else:
+            cursor.execute("UPDATE accounts SET cash_balance = 10000.0 WHERE type != 'SCHWAB'")
+            cursor.execute("DELETE FROM positions WHERE account_id NOT IN (SELECT id FROM accounts WHERE type = 'SCHWAB')")
+            cursor.execute("DELETE FROM trades WHERE account_id NOT IN (SELECT id FROM accounts WHERE type = 'SCHWAB')")
+            cursor.execute("DELETE FROM portfolio_snapshots WHERE account_id NOT IN (SELECT id FROM accounts WHERE type = 'SCHWAB')")
+            cursor.execute("DELETE FROM watchlist WHERE account_id NOT IN (SELECT id FROM accounts WHERE type = 'SCHWAB')")
+            cursor.execute("DELETE FROM chat_messages;")
+            
+            default_tickers = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA", "NVDA", "META", "JPM", "V", "NFLX"]
+            for ticker in default_tickers:
+                cursor.execute(
+                    "INSERT INTO watchlist (id, user_id, account_id, ticker, added_at) VALUES (?, ?, ?, ?, ?)",
+                    (str(uuid.uuid4()), "default", "acct_roth", ticker, now)
+                )
+        conn.commit()
