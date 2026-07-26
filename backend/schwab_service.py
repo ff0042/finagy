@@ -20,6 +20,7 @@ else:
     DB_DIR = Path(__file__).parent.parent / "db"
 
 TOKENS_DB_PATH = DB_DIR / "tokens.db"
+TOKENS_FILE_PATH = DB_DIR / "tokens.json"
 
 def ensure_ssl_certs():
     """Ensure self-signed SSL certificates exist for HTTPS callback listener on port 8080."""
@@ -36,7 +37,10 @@ def ensure_ssl_certs():
         from cryptography.hazmat.primitives.asymmetric import rsa
 
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "127.0.0.1")])
+        name = x509.Name([
+            x509.NameAttribute(NameOID.COMMON_NAME, "127.0.0.1"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "FinAlly Workstation")
+        ])
         san = x509.SubjectAlternativeName([
             x509.IPAddress(ipaddress.ip_address("127.0.0.1")),
             x509.DNSName("localhost")
@@ -69,75 +73,12 @@ def ensure_ssl_certs():
         print(f"[WARN] Failed to generate SSL certificates: {e}")
         return False
 
-class OAuthCallbackHandler(BaseHTTPRequestHandler):
-    def log_message(self, format, *args):
-        pass
-
-    def do_GET(self):
-        parsed = urllib.parse.urlparse(self.path)
-        query = urllib.parse.parse_qs(parsed.query)
-        code = query.get('code', [None])[0]
-        
-        if code:
-            schwab_service.exchange_code_for_tokens(code)
-            html = """
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>Schwab Authorization Successful</title>
-                <style>
-                    body { background-color: #0d1117; color: #ffffff; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-                    .card { background-color: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 2rem; text-align: center; max-width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
-                    h2 { color: #2ea043; margin-top: 0; }
-                    p { color: #8b949e; font-size: 14px; }
-                </style>
-            </head>
-            <body>
-                <div class="card">
-                    <h2>Schwab Connected!</h2>
-                    <p>Your authentication tokens have been updated successfully.</p>
-                    <p>You can close this window and return to FinAlly workstation.</p>
-                </div>
-                <script>
-                    if (window.opener) {
-                        try { window.opener.postMessage("schwab-auth-success", "*"); } catch(e) {}
-                        setTimeout(() => window.close(), 2500);
-                    }
-                </script>
-            </body>
-            </html>
-            """
-            self.send_response(200)
-            self.send_header('Content-Type', 'text/html')
-            self.end_headers()
-            self.wfile.write(html.encode('utf-8'))
-        else:
-            self.send_response(400)
-            self.end_headers()
-
-def start_https_listener():
-    if not ensure_ssl_certs():
-        return
-    try:
-        cert_path = DB_DIR / "cert.pem"
-        key_path = DB_DIR / "key.pem"
-        server = HTTPServer(('0.0.0.0', 8080), OAuthCallbackHandler)
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ctx.load_cert_chain(certfile=str(cert_path), keyfile=str(key_path))
-        server.socket = ctx.wrap_socket(server.socket, server_side=True)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        print("[INFO] Started HTTPS OAuth Callback Listener on port 8080.")
-    except Exception as e:
-        print(f"[WARN] HTTPS listener start error: {e}")
-
 class SchwabService:
     """High-level Schwab Developer API service for OAuth PKCE authentication, account management, positions, and orders."""
     
     def __init__(self):
         self.client = None
         self._init_client()
-        start_https_listener()
 
     def _init_client(self):
         app_key = os.getenv("SCHWAB_CLIENT_ID") or os.getenv("SCHWAB_APP_KEY")
@@ -149,15 +90,65 @@ class SchwabService:
 
         TOKENS_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
+        has_valid_db_token = False
+        if TOKENS_DB_PATH.exists():
+            try:
+                conn = sqlite3.connect(str(TOKENS_DB_PATH))
+                cur = conn.cursor()
+                cur.execute("SELECT access_token, refresh_token, refresh_token_issued FROM schwabdev LIMIT 1")
+                row = cur.fetchone()
+                conn.close()
+                if row and row[0] and row[1] and row[2]:
+                    issued_str = row[2].replace("Z", "+00:00")
+                    issued_dt = datetime.datetime.fromisoformat(issued_str)
+                    if issued_dt.tzinfo is None:
+                        issued_dt = issued_dt.replace(tzinfo=datetime.timezone.utc)
+                    now_dt = datetime.datetime.now(datetime.timezone.utc)
+                    # Refresh tokens expire after 7 days
+                    if (now_dt - issued_dt).total_seconds() < 6.5 * 86400:
+                        has_valid_db_token = True
+            except Exception:
+                pass
+
+        has_valid_file_token = False
+        if TOKENS_FILE_PATH.exists():
+            try:
+                with open(TOKENS_FILE_PATH, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    issued_str = data.get("refresh_token_issued", "")
+                    toks = data.get("token_dictionary", {})
+                    if toks.get("access_token") and toks.get("refresh_token") and issued_str:
+                        issued_str = issued_str.replace("Z", "+00:00")
+                        issued_dt = datetime.datetime.fromisoformat(issued_str)
+                        if issued_dt.tzinfo is None:
+                            issued_dt = issued_dt.replace(tzinfo=datetime.timezone.utc)
+                        now_dt = datetime.datetime.now(datetime.timezone.utc)
+                        if (now_dt - issued_dt).total_seconds() < 6.5 * 86400:
+                            has_valid_file_token = True
+            except Exception:
+                pass
+
+        if not has_valid_db_token and not has_valid_file_token:
+            self.client = None
+            return
+
         try:
             import schwabdev
-            self.client = schwabdev.Client(
-                app_key=app_key,
-                app_secret=app_secret,
-                callback_url=callback_url,
-                tokens_db=str(TOKENS_DB_PATH),
-                open_browser_for_auth=False
-            )
+            try:
+                self.client = schwabdev.Client(
+                    app_key=app_key,
+                    app_secret=app_secret,
+                    callback_url=callback_url,
+                    tokens_db=str(TOKENS_DB_PATH),
+                    open_browser_for_auth=False
+                )
+            except TypeError:
+                self.client = schwabdev.Client(
+                    app_key=app_key,
+                    app_secret=app_secret,
+                    callback_url=callback_url,
+                    tokens_file=str(TOKENS_FILE_PATH)
+                )
         except Exception as e:
             print(f"[WARN] schwabdev initialization: {e}")
             self.client = None
@@ -174,13 +165,15 @@ class SchwabService:
         return f"https://api.schwabapi.com/v1/oauth/authorize?{urllib.parse.urlencode(params)}"
 
     def exchange_code_for_tokens(self, code: str) -> Dict[str, Any]:
-        """Exchange authorization code directly for tokens and write to persistent TOKENS_DB_PATH."""
+        """Exchange authorization code directly for tokens and write to persistent TOKENS_DB_PATH and TOKENS_FILE_PATH."""
         app_key = os.getenv("SCHWAB_CLIENT_ID") or os.getenv("SCHWAB_APP_KEY")
         app_secret = os.getenv("SCHWAB_CLIENT_SECRET") or os.getenv("SCHWAB_APP_SECRET")
         callback_url = os.getenv("SCHWAB_REDIRECT_URI", "https://127.0.0.1:8080")
 
         if not app_key or not app_secret:
             return {"success": False, "error": "App credentials missing"}
+
+        raw_code = urllib.parse.unquote(code)
 
         auth_str = base64.b64encode(f"{app_key}:{app_secret}".encode("utf-8")).decode("utf-8")
         headers = {
@@ -189,7 +182,7 @@ class SchwabService:
         }
         payload = {
             "grant_type": "authorization_code",
-            "code": code,
+            "code": raw_code,
             "redirect_uri": callback_url
         }
 
@@ -197,7 +190,8 @@ class SchwabService:
             resp = requests.post("https://api.schwabapi.com/v1/oauth/token", data=payload, headers=headers, timeout=10)
             if resp.status_code == 200:
                 tokens_dict = resp.json()
-                self._write_tokens_to_db(str(TOKENS_DB_PATH), tokens_dict)
+                self._write_tokens_to_db(TOKENS_DB_PATH, tokens_dict)
+                self._write_tokens_to_file(TOKENS_FILE_PATH, tokens_dict)
                 self._init_client()
                 return {"success": True, "tokens": tokens_dict}
             else:
@@ -207,11 +201,11 @@ class SchwabService:
             print(f"[WARN] Token exchange exception: {e}")
             return {"success": False, "error": str(e)}
 
-    def _write_tokens_to_db(self, tokens_db_path: str, tokens_data: dict):
+    def _write_tokens_to_db(self, tokens_db_path: Path, tokens_data: dict):
         """Direct SQLite writer matching schwabdev table schema exactly."""
         try:
             now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-            conn = sqlite3.connect(tokens_db_path)
+            conn = sqlite3.connect(str(tokens_db_path))
             cur = conn.cursor()
             cur.execute("""
             CREATE TABLE IF NOT EXISTS schwabdev (
@@ -253,17 +247,41 @@ class SchwabService:
         except Exception as e:
             print(f"[WARN] Failed to write tokens to DB: {e}")
 
+    def _write_tokens_to_file(self, tokens_file_path: Path, tokens_data: dict):
+        """Write JSON format matching schwabdev token specification."""
+        try:
+            now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            formatted = {
+                "access_token_issued": now_iso,
+                "refresh_token_issued": now_iso,
+                "token_dictionary": tokens_data
+            }
+            tokens_file_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(tokens_file_path, "w", encoding="utf-8") as f:
+                json.dump(formatted, f, indent=4)
+            print(f"[SUCCESS] Successfully saved OAuth tokens into persistent {tokens_file_path}")
+        except Exception as e:
+            print(f"[WARN] Failed to write tokens to file: {e}")
+
     def disconnect(self) -> bool:
         """Clear saved Schwab tokens and reset active client."""
         self.client = None
         try:
             if TOKENS_DB_PATH.exists():
-                conn = sqlite3.connect(str(TOKENS_DB_PATH))
-                cur = conn.cursor()
-                cur.execute("DROP TABLE IF EXISTS schwabdev;")
-                conn.commit()
-                conn.close()
-                print(f"[INFO] Successfully disconnected and cleared Schwab tokens from {TOKENS_DB_PATH}")
+                try:
+                    conn = sqlite3.connect(str(TOKENS_DB_PATH))
+                    cur = conn.cursor()
+                    cur.execute("DROP TABLE IF EXISTS schwabdev;")
+                    conn.commit()
+                    conn.close()
+                except Exception:
+                    pass
+            if TOKENS_FILE_PATH.exists():
+                try:
+                    os.remove(TOKENS_FILE_PATH)
+                except Exception:
+                    pass
+            print("[INFO] Successfully disconnected and cleared Schwab tokens")
             return True
         except Exception as e:
             print(f"[WARN] Error disconnecting Schwab tokens: {e}")

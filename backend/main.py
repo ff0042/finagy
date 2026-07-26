@@ -9,9 +9,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from db.database import init_db, execute_query, list_accounts, get_active_account, set_active_account
+from db.database import init_db, execute_query, list_accounts, get_active_account, set_active_account, reset_session_state
 from market_data import get_market_data_provider, price_cache
-from llm.llm_service import process_chat, execute_actions
+from llm.llm_service import process_chat, execute_actions, get_active_model, set_active_model, AVAILABLE_MODELS
 from schwab_service import schwab_service
 
 load_dotenv()
@@ -49,32 +49,69 @@ async def snapshot_task():
 @app.on_event("startup")
 async def startup_event():
     init_db()
+    reset_session_state()
+    
+    # Check if an active account is already set before syncing Schwab
+    current_active = get_active_account()
     
     # Sync Schwab accounts if available
     schwab_accts = schwab_service.get_linked_accounts()
     if schwab_accts:
         now = datetime.utcnow().isoformat()
+        has_active = current_active is not None
         for idx, sa in enumerate(schwab_accts):
+            # If no account was active previously, make first Schwab account active; otherwise preserve active account
+            should_be_active = 1 if (not has_active and idx == 0) else 0
             execute_query("""
             INSERT INTO accounts (id, user_id, account_number, account_hash, name, type, is_active, cash_balance, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET account_hash=excluded.account_hash, cash_balance=excluded.cash_balance
-            """, (sa["id"], "default", sa["account_number"], sa["account_hash"], sa["name"], sa["type"], 1 if idx == 0 else 0, sa["cash_balance"], now))
+            """, (sa["id"], "default", sa["account_number"], sa["account_hash"], sa["name"], sa["type"], should_be_active, sa["cash_balance"], now))
 
-    # Get active watchlist tickers
+    # Ensure active account is determined
     active = get_active_account()
-    acct_id = active["id"] if active else "default"
+    acct_id = active["id"] if active else "acct_roth"
+    
+    # Seed default watchlist for active account if empty
     watchlist = execute_query("SELECT ticker FROM watchlist WHERE user_id = 'default' AND account_id = ?", (acct_id,))
     tickers = [row["ticker"] for row in watchlist]
     if not tickers:
-        tickers = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA", "NVDA", "META", "JPM", "V", "NFLX"]
+        default_tickers = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA", "NVDA", "META", "JPM", "V", "NFLX"]
+        now = datetime.utcnow().isoformat()
+        for t in default_tickers:
+            execute_query(
+                "INSERT INTO watchlist (id, user_id, account_id, ticker, added_at) VALUES (?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), "default", acct_id, t, now)
+            )
+        tickers = default_tickers
+        
     market_provider.start(tickers)
-    
     asyncio.create_task(snapshot_task())
-    
+
+@app.post("/api/session/reset")
+def session_reset():
+    reset_session_state()
+    active = set_active_account("acct_roth")
+    return {"status": "reset", "active_account": active}
+
+class ModelSelectRequest(BaseModel):
+    model: str
+
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+@app.get("/api/llm/models")
+def get_llm_models():
+    return {
+        "active_model": get_active_model(),
+        "models": AVAILABLE_MODELS
+    }
+
+@app.post("/api/llm/model")
+def set_llm_model(req: ModelSelectRequest):
+    new_model = set_active_model(req.model)
+    return {"active_model": new_model}
 
 @app.get("/api/schwab/auth-status")
 def schwab_auth_status():
@@ -89,50 +126,76 @@ def schwab_auth_url():
 @app.post("/api/schwab/disconnect")
 def schwab_disconnect():
     schwab_service.disconnect()
-    execute_query("UPDATE accounts SET is_active = 0 WHERE user_id = 'default'")
+    execute_query("DELETE FROM accounts WHERE type = 'SCHWAB'")
+    reset_session_state("acct_roth")
+    set_active_account("acct_roth")
     return {"status": "disconnected"}
 
-def render_schwab_success_page():
-    return """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Schwab Authorization Successful</title>
-        <style>
-            body { background-color: #0d1117; color: #ffffff; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-            .card { background-color: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 2rem; text-align: center; max-width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
-            h2 { color: #2ea043; margin-top: 0; }
-            p { color: #8b949e; font-size: 14px; }
-        </style>
-    </head>
-    <body>
-        <div class="card">
-            <h2>Schwab Connected!</h2>
-            <p>Your authentication tokens have been updated successfully.</p>
-            <p>You can close this window and return to FinAlly workstation.</p>
-        </div>
-        <script>
-            if (window.opener) {
-                try { window.opener.postMessage("schwab-auth-success", "*"); } catch(e) {}
-                setTimeout(() => window.close(), 2500);
-            }
-        </script>
-    </body>
-    </html>
-    """
+def render_schwab_success_page(success: bool = True, error_msg: str = ""):
+    if success:
+        return """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Schwab Authorization Successful</title>
+            <style>
+                body { background-color: #0d1117; color: #ffffff; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+                .card { background-color: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 2rem; text-align: center; max-width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+                h2 { color: #2ea043; margin-top: 0; }
+                p { color: #8b949e; font-size: 14px; }
+            </style>
+        </head>
+        <body>
+            <div class="card">
+                <h2>Schwab Connected!</h2>
+                <p>Your authentication tokens have been updated successfully.</p>
+                <p>You can close this window and return to FinAlly workstation.</p>
+            </div>
+            <script>
+                if (window.opener) {
+                    try { window.opener.postMessage("schwab-auth-success", "*"); } catch(e) {}
+                    setTimeout(() => window.close(), 2500);
+                }
+            </script>
+        </body>
+        </html>
+        """
+    else:
+        return f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Schwab Authorization Failed</title>
+            <style>
+                body {{ background-color: #0d1117; color: #ffffff; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }}
+                .card {{ background-color: #161b22; border: 1px solid #da3633; border-radius: 8px; padding: 2rem; text-align: center; max-width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }}
+                h2 {{ color: #f85149; margin-top: 0; }}
+                p {{ color: #8b949e; font-size: 14px; }}
+                .err {{ color: #ff7b72; font-family: monospace; font-size: 12px; word-break: break-all; margin-top: 1rem; text-align: left; background: #0d1117; padding: 0.75rem; border-radius: 4px; }}
+            </style>
+        </head>
+        <body>
+            <div class="card">
+                <h2>Schwab Authorization Failed</h2>
+                <p>Token exchange could not be completed.</p>
+                <div class="err">{error_msg}</div>
+            </div>
+        </body>
+        </html>
+        """
 
 @app.get("/api/schwab/callback")
 def schwab_callback(code: str = Query(None), session: str = Query(None)):
     if not code:
         raise HTTPException(status_code=400, detail="Missing code parameter")
-    schwab_service.exchange_code_for_tokens(code)
-    return HTMLResponse(content=render_schwab_success_page())
+    res = schwab_service.exchange_code_for_tokens(code)
+    return HTMLResponse(content=render_schwab_success_page(res.get("success", False), res.get("error", "")))
 
 @app.get("/")
 def root(code: str = Query(None), session: str = Query(None)):
     if code:
-        schwab_service.exchange_code_for_tokens(code)
-        return HTMLResponse(content=render_schwab_success_page())
+        res = schwab_service.exchange_code_for_tokens(code)
+        return HTMLResponse(content=render_schwab_success_page(res.get("success", False), res.get("error", "")))
     if os.path.exists("static/index.html"):
         return FileResponse("static/index.html")
     return {"status": "ok"}
@@ -140,7 +203,6 @@ def root(code: str = Query(None), session: str = Query(None)):
 @app.get("/api/accounts")
 def get_accounts():
     accounts = list_accounts()
-    is_mock = os.getenv("LLM_MOCK", "false").lower() == "true"
     schwab_connected = schwab_service.get_token_status().get("authenticated", False)
     
     if schwab_connected:
@@ -165,17 +227,22 @@ def get_accounts():
                 for sa in schwab_accts:
                     sa["is_active"] = 1 if sa["id"] == active_id else 0
             return schwab_accts
-            
-    if not is_mock:
-        return []
-        
-    return accounts
+
+    local_accts = [a for a in accounts if a["type"] != "SCHWAB"]
+    if local_accts and not any(a.get("is_active") == 1 for a in local_accts):
+        set_active_account(local_accts[0]["id"])
+        local_accts[0]["is_active"] = 1
+    return local_accts
 
 @app.get("/api/accounts/active")
 def active_account():
     acct = get_active_account()
     if not acct:
-        raise HTTPException(status_code=404, detail="No active account found")
+        accounts = get_accounts()
+        if accounts:
+            acct = set_active_account(accounts[0]["id"])
+        else:
+            raise HTTPException(status_code=404, detail="No active account found")
     return acct
 
 class AccountSelectRequest(BaseModel):
@@ -199,34 +266,49 @@ async def stream_prices(request: Request):
 
 @app.get("/api/portfolio")
 def get_portfolio():
-    is_mock = os.getenv("LLM_MOCK", "false").lower() == "true"
     schwab_connected = schwab_service.get_token_status().get("authenticated", False)
-    
-    if not schwab_connected and not is_mock:
-        return {
-            "account": None,
-            "cash_balance": 0.0,
-            "positions": [],
-            "total_value": 0.0,
-            "total_pnl": 0.0
-        }
-
+    accounts = get_accounts()
     active = get_active_account()
-    acct_id = active["id"] if active else "default"
+    
+    if not active or not any(a["id"] == active["id"] for a in accounts):
+        if accounts:
+            active = set_active_account(accounts[0]["id"])
+
+    acct_id = active["id"] if active else "acct_roth"
     acct_hash = active.get("account_hash") if active else None
     cash = active["cash_balance"] if active else 10000.0
     
-    # Query live cash balance from Schwab if authenticated
-    if acct_hash and schwab_service.client:
+    # WHEN CONNECTED TO SCHWAB: Query cash balance directly from Schwab API
+    if schwab_connected and acct_hash:
         try:
             details = schwab_service.get_account_details(acct_hash)
             if details and "securitiesAccount" in details:
-                balances = details.get("securitiesAccount", {}).get("currentBalances", {})
+                sec_acct = details.get("securitiesAccount", {})
+                balances = sec_acct.get("currentBalances", {}) or sec_acct.get("initialBalances", {})
                 if "cashBalance" in balances:
-                    cash = balances["cashBalance"]
-                    execute_query("UPDATE accounts SET cash_balance = ? WHERE id = ?", (cash, acct_id))
+                    cash = float(balances["cashBalance"])
+                elif "cashAvailableForTrading" in balances:
+                    cash = float(balances["cashAvailableForTrading"])
+                elif "liquidity" in balances:
+                    cash = float(balances["liquidity"])
+                    
+                execute_query("UPDATE accounts SET cash_balance = ? WHERE id = ?", (cash, acct_id))
+                if active:
+                    active["cash_balance"] = cash
         except Exception as e:
-            print(f"[WARN] Failed to fetch live Schwab balances: {e}")
+            print(f"[WARN] Failed to fetch live Schwab cash balance: {e}")
+
+        return {
+            "account": active,
+            "cash_balance": cash,
+            "positions": [],
+            "total_value": cash,
+            "total_pnl": 0.0
+        }
+
+    # WHEN DISCONNECTED: Local simulated portfolio
+    if not cash or cash <= 0:
+        cash = 10000.0
 
     positions = execute_query("SELECT ticker, quantity, avg_cost FROM positions WHERE user_id = 'default' AND account_id = ?", (acct_id,))
     if not positions and acct_id == "acct_roth":

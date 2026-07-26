@@ -6,10 +6,11 @@ if __name__ == "__main__":
     ensure_ssl_certs()
     cert = "db/cert.pem" if os.path.exists("db/cert.pem") else None
     key = "db/key.pem" if os.path.exists("db/key.pem") else None
+    port = int(os.getenv("PORT", 8080))
     
     if cert and key:
-        print("[INFO] Starting HTTPS Uvicorn Server on 0.0.0.0:8000 with SSL...")
-        uvicorn.run("main:app", host="0.0.0.0", port=8000, ssl_keyfile=key, ssl_certfile=cert)
+        print(f"[INFO] Starting HTTPS Uvicorn Server on 0.0.0.0:{port} with SSL...")
+        uvicorn.run("main:app", host="0.0.0.0", port=port, ssl_keyfile=key, ssl_certfile=cert)
     else:
-        print("[INFO] Starting HTTP Uvicorn Server on 0.0.0.0:8000...")
-        uvicorn.run("main:app", host="0.0.0.0", port=8000)
+        print(f"[INFO] Starting HTTP Uvicorn Server on 0.0.0.0:{port}...")
+        uvicorn.run("main:app", host="0.0.0.0", port=port)

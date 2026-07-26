@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User, Zap, Loader2 } from 'lucide-react';
 
 interface ChatMessage {
@@ -19,6 +19,23 @@ export default function AIChatPanel() {
   const [messages, setMessages] = useState<ChatMessage[]>([
     { role: 'assistant', text: 'Hello! I am FinAlly, your AI trading copilot. How can I help with your portfolio or watchlist today?' }
   ]);
+
+  useEffect(() => {
+    const handleResetChat = () => {
+      setMessages([
+        { role: 'assistant', text: 'Hello! I am FinAlly, your AI trading copilot. How can I help with your portfolio or watchlist today?' }
+      ]);
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('refresh-workstation', handleResetChat);
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('refresh-workstation', handleResetChat);
+      }
+    };
+  }, []);
 
   const sendPrompt = async (promptText: string) => {
     if (!promptText.trim() || loading) return;

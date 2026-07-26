@@ -32,7 +32,18 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
-    checkAuth();
+    const initSession = async () => {
+      if (typeof window !== 'undefined' && !sessionStorage.getItem('finally_session_active')) {
+        try {
+          await fetch('/api/session/reset', { method: 'POST' });
+          sessionStorage.setItem('finally_session_active', 'true');
+        } catch (err) {}
+      }
+      checkAuth();
+    };
+
+    initSession();
+
     const handleRefresh = () => checkAuth();
     if (typeof window !== 'undefined') {
       window.addEventListener('refresh-workstation', handleRefresh);
@@ -73,30 +84,7 @@ export default function Dashboard() {
       <div className="h-[calc(100vh-2rem)] flex flex-col">
         <Header />
         
-        {isAuthenticated === false ? (
-          <div className="flex-1 flex flex-col items-center justify-center bg-card rounded-lg border border-gray-800 p-8 text-center my-auto shadow-2xl">
-            <div className="w-16 h-16 bg-accent/10 border border-accent/30 rounded-full flex items-center justify-center mb-4">
-              <Lock className="w-8 h-8 text-accent" />
-            </div>
-            <h2 className="text-2xl font-bold text-white mb-2">Session Disconnected</h2>
-            <p className="text-sm text-gray-400 max-w-md mb-6 leading-relaxed">
-              You are currently signed out of Schwab. All live portfolio feeds, sensitive balances, and account details have been cleared.
-            </p>
-            <button
-              onClick={handleConnect}
-              disabled={loading}
-              className="flex items-center gap-2 bg-accent hover:bg-accent/90 text-black font-bold px-5 py-2.5 rounded-md text-sm transition-colors shadow-lg">
-              {loading ? (
-                <RefreshCw className="w-4 h-4 animate-spin text-black" />
-              ) : (
-                <ShieldAlert className="w-4 h-4 text-black" />
-              )}
-              <span>Connect Schwab to Access Workstation</span>
-              <ExternalLink className="w-4 h-4 text-black/70" />
-            </button>
-          </div>
-        ) : (
-          <div className="flex-1 flex gap-4 min-h-0">
+        <div className="flex-1 flex gap-4 min-h-0 mt-4">
             <div className="w-[300px] flex-shrink-0">
               <WatchlistPanel onSelect={setSelectedTicker} />
             </div>
@@ -129,7 +117,6 @@ export default function Dashboard() {
               <AIChatPanel />
             </div>
           </div>
-        )}
       </div>
     </PriceStreamProvider>
   );

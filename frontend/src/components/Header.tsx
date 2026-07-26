@@ -4,6 +4,7 @@ import { usePriceStream } from '@/hooks/usePriceStream';
 import { useState, useEffect, useCallback } from 'react';
 import AccountSelector from './AccountSelector';
 import SchwabAuthBadge from './SchwabAuthBadge';
+import ModelSelector from './ModelSelector';
 
 export default function Header() {
   const { status, prices } = usePriceStream();
@@ -52,15 +53,15 @@ export default function Header() {
   }, [fetchAuthStatus, fetchPortfolio]);
 
   let livePosValue = 0;
-  if (isAuthenticated && portfolio.positions) {
+  if (portfolio.positions) {
     portfolio.positions.forEach((p: any) => {
       const cp = prices[p.ticker]?.price || p.current_price || p.avg_cost;
       livePosValue += cp * p.quantity;
     });
   }
 
-  const liveCash = isAuthenticated ? (portfolio.cash_balance || 0) : 0.0;
-  const liveTotalValue = isAuthenticated ? (liveCash + livePosValue) : 0.0;
+  const liveCash = portfolio.cash_balance !== undefined ? portfolio.cash_balance : 10000.0;
+  const liveTotalValue = portfolio.positions && portfolio.positions.length > 0 ? (liveCash + livePosValue) : (portfolio.total_value !== undefined ? portfolio.total_value : liveCash);
 
   return (
     <header className="flex flex-wrap items-center justify-between p-4 bg-card rounded-lg mb-4 gap-4">
@@ -70,6 +71,7 @@ export default function Header() {
       <div className="flex items-center gap-4">
         <SchwabAuthBadge />
         <AccountSelector />
+        <ModelSelector />
         <div className="text-right pl-2 border-l border-gray-800">
           <p className="text-xs text-gray-400">Total Value</p>
           <p className="text-xl font-mono text-white font-bold">${liveTotalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
