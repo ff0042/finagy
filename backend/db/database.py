@@ -86,6 +86,25 @@ def init_db():
         """)
         
         cursor.execute("""
+        CREATE TABLE IF NOT EXISTS orders (
+            id TEXT PRIMARY KEY,
+            user_id TEXT,
+            account_id TEXT,
+            ticker TEXT,
+            side TEXT,
+            quantity REAL,
+            order_type TEXT,
+            limit_price REAL,
+            stop_price REAL,
+            time_in_force TEXT,
+            status TEXT,
+            broker_order_id TEXT,
+            created_at TEXT,
+            updated_at TEXT
+        )
+        """)
+        
+        cursor.execute("""
         CREATE TABLE IF NOT EXISTS portfolio_snapshots (
             id TEXT PRIMARY KEY,
             user_id TEXT,

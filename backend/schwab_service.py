@@ -417,4 +417,76 @@ class SchwabService:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def place_order(self, account_hash: str, ticker: str, quantity: float, side: str, order_type: str = "MARKET", limit_price: float = None, stop_price: float = None, duration: str = "DAY") -> Dict[str, Any]:
+        """Place an equity order with advanced parameters via client.order_place()."""
+        if not self.client:
+            return {"success": False, "error": "Schwab client not initialized"}
+            
+        instruction = "BUY" if side.lower() == "buy" else "SELL"
+        order_spec = {
+            "orderType": order_type.upper(),
+            "session": "NORMAL",
+            "duration": duration.upper(),
+            "orderStrategyType": "SINGLE",
+            "orderLegCollection": [
+                {
+                    "instruction": instruction,
+                    "quantity": int(quantity),
+                    "instrument": {
+                        "symbol": ticker.upper(),
+                        "assetType": "EQUITY"
+                    }
+                }
+            ]
+        }
+        
+        if limit_price is not None and order_type.upper() in ("LIMIT", "STOP_LIMIT"):
+            order_spec["price"] = float(limit_price)
+            
+        if stop_price is not None and order_type.upper() in ("STOP", "STOP_LIMIT"):
+            order_spec["stopPrice"] = float(stop_price)
+            
+        try:
+            place_fn = getattr(self.client, 'place_order', getattr(self.client, 'order_place', None))
+            if not place_fn: return {"success": False, "error": "Order place function missing"}
+            resp = place_fn(account_hash, order_spec)
+            
+            order_id = None
+            if resp and resp.status_code in (200, 201):
+                location = resp.headers.get("Location")
+                if location:
+                    order_id = location.split("/")[-1]
+                return {"success": True, "order_id": order_id, "response": resp.json() if resp.content else "Order submitted"}
+            return {"success": False, "status_code": resp.status_code, "text": resp.text}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def cancel_order(self, account_hash: str, order_id: str) -> Dict[str, Any]:
+        """Cancel a working order."""
+        if not self.client:
+            return {"success": False, "error": "Schwab client not initialized"}
+        try:
+            cancel_fn = getattr(self.client, 'cancel_order', getattr(self.client, 'order_cancel', None))
+            if not cancel_fn: return {"success": False, "error": "Order cancel function missing"}
+            resp = cancel_fn(account_hash, order_id)
+            if resp and resp.status_code in (200, 204):
+                return {"success": True}
+            return {"success": False, "status_code": resp.status_code, "text": resp.text}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def get_orders(self, account_hash: str) -> Dict[str, Any]:
+        """Get all orders for the account."""
+        if not self.client:
+            return {"success": False, "error": "Schwab client not initialized"}
+        try:
+            get_fn = getattr(self.client, 'account_orders', getattr(self.client, 'orders_account', None))
+            if not get_fn: return {"success": False, "error": "Get orders function missing"}
+            resp = get_fn(account_hash)
+            if resp and resp.status_code == 200:
+                return {"success": True, "orders": resp.json()}
+            return {"success": False, "status_code": resp.status_code, "text": resp.text}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
 schwab_service = SchwabService()

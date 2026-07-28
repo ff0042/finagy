@@ -50,7 +50,7 @@ export default function Header() {
   }, [portfolio, prices]);
 
   return (
-    <header className="flex flex-wrap items-center justify-between p-4 bg-card rounded-lg mb-4 gap-4">
+    <header className="flex flex-wrap items-center justify-between p-4 bg-card rounded-lg gap-4">
       <div className="flex items-center gap-4">
         <h1 className="text-2xl font-bold text-white">Fin<span className="text-primary">Ally</span></h1>
       </div>

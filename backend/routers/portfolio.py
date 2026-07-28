@@ -1,4 +1,3 @@
-
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -11,6 +10,24 @@ from backend.constants import DEFAULT_USER_ID, DEFAULT_ACCOUNT_ID
 from backend.trade_service import execute_actions
 
 router = APIRouter()
+
+def parse_occ_symbol(symbol: str) -> str:
+    if len(symbol) < 21:
+        return symbol
+    root = symbol[:6].strip()
+    yymmdd = symbol[6:12]
+    cp = symbol[12:13]
+    strike_str = symbol[13:]
+    try:
+        month_str = yymmdd[2:4]
+        day_str = yymmdd[4:6]
+        year_str = yymmdd[0:2]
+        date_str = f"{month_str}/{day_str}/{year_str}"
+        strike = float(strike_str) / 1000.0
+        strike_fmt = f"{strike:g}"
+        return f"{root} {date_str} {strike_fmt} {cp}"
+    except Exception:
+        return symbol
 
 @router.get("/api/accounts")
 def get_accounts():
@@ -79,8 +96,63 @@ def get_portfolio():
                 execute_query("UPDATE accounts SET cash_balance = ? WHERE id = ?", (cash, acct_id))
                 if active:
                     active["cash_balance"] = cash
-        except Exception:
-            pass
+                schwab_positions = sec_acct.get("positions", [])
+                pos_list = []
+                total_pos_value = 0.0
+                total_cost = 0.0
+                
+                for p in schwab_positions:
+                    instrument = p.get("instrument", {})
+                    ticker = instrument.get("symbol", "")
+                    if not ticker or instrument.get("assetType") == "CASH_EQUIVALENT" or ticker == "MMDA1":
+                        continue
+                        
+                    asset_type = instrument.get("assetType", "EQUITY")
+                    description = ticker
+                    if asset_type == "OPTION":
+                        description = parse_occ_symbol(ticker)
+                    elif asset_type == "MUTUAL_FUND":
+                        description = instrument.get("description", ticker)
+                        
+                    long_qty = p.get("longQuantity", 0)
+                    short_qty = p.get("shortQuantity", 0)
+                    qty = long_qty - short_qty
+                    
+                    if qty == 0:
+                        continue
+                        
+                    avg = p.get("averagePrice", 0.0)
+                    market_val = p.get("marketValue", 0.0)
+                    
+                    cp = price_cache.get(ticker)
+                    current_price = cp["price"] if cp else (market_val / qty if qty != 0 else avg)
+                    
+                    cost = avg * qty
+                    unrealized = market_val - cost
+                    
+                    total_pos_value += market_val
+                    total_cost += cost
+                    
+                    pos_list.append({
+                        "ticker": ticker,
+                        "description": description,
+                        "asset_type": asset_type,
+                        "quantity": qty,
+                        "avg_cost": avg,
+                        "current_price": current_price,
+                        "market_value": market_val,
+                        "unrealized_pnl": unrealized
+                    })
+                    
+                return {
+                    "account": active,
+                    "cash_balance": cash,
+                    "positions": pos_list,
+                    "total_value": cash + total_pos_value,
+                    "total_pnl": total_pos_value - total_cost
+                }
+        except Exception as e:
+            print(f"[WARN] Error fetching Schwab portfolio: {e}")
 
         return {
             "account": active,
@@ -116,6 +188,8 @@ def get_portfolio():
         
         pos_list.append({
             "ticker": ticker,
+            "description": ticker,
+            "asset_type": "EQUITY",
             "quantity": qty,
             "avg_cost": avg,
             "current_price": current_price,

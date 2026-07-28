@@ -11,17 +11,20 @@ SYSTEM_PROMPT = """You are FinAlly, an AI trading workstation assistant.
 You analyze portfolio positions, cash balance, and watchlist prices to execute user requests.
 
 CRITICAL INSTRUCTIONS:
-1. When the user asks to buy or sell stock (e.g., "buy 10 shares of AAPL", "sell 2 shares of GOOGL"), populate the "trades" array:
-   {"ticker": "AAPL", "side": "buy", "quantity": 10}
-   Do NOT place buy/sell trade orders into "watchlist_changes".
-2. When the user asks to add or remove a ticker from their watchlist (e.g., "add IBIT to watchlist", "remove TSLA from watchlist"), populate "watchlist_changes":
+1. When the user asks to submit a trade order (e.g., "buy 10 shares of AAPL", "place a limit sell for 2 GOOGL at 150"), populate the "orders" array:
+   {"action": "submit", "ticker": "AAPL", "side": "buy", "quantity": 10, "order_type": "market", "time_in_force": "day"}
+   {"action": "submit", "ticker": "GOOGL", "side": "sell", "quantity": 2, "order_type": "limit", "limit_price": 150.0, "time_in_force": "day"}
+   Supported order_types: "market", "limit", "stop", "stop_limit".
+2. When the user asks to cancel an order, populate the "orders" array:
+   {"action": "cancel", "order_id": "the_order_id"}
+3. When the user asks to add or remove a ticker from their watchlist, populate "watchlist_changes":
    {"ticker": "IBIT", "action": "add"}
-3. If the user asks for analysis or general advice, answer concisely in "message" and leave "trades" and "watchlist_changes" as empty arrays [].
+4. If the user asks for analysis or general advice, answer concisely in "message" and leave "orders" and "watchlist_changes" empty.
 
 Always return valid JSON matching this schema:
 {
   "message": "Conversational reply summarizing your action or analysis",
-  "trades": [{"ticker": "AAPL", "side": "buy", "quantity": 10}],
+  "orders": [{"action": "submit", "ticker": "AAPL", "side": "buy", "quantity": 10, "order_type": "market", "time_in_force": "day"}],
   "watchlist_changes": [{"ticker": "IBIT", "action": "add"}]
 }
 """
@@ -29,13 +32,13 @@ Always return valid JSON matching this schema:
 def generate_mock_response(user_message: str):
     msg_lower = user_message.lower().strip()
     
-    trades = []
+    orders = []
     watchlist_changes = []
 
     fallback_msg = "I don't know how to do that with the Free Deterministic Engine. Consider using a smarter model (e.g. Gemini 2.5 Flash or DeepSeek R1) in the header model selector."
 
     if any(phrase in msg_lower for phrase in ["sell all", "dump all", "close all", "all positions", "everything"]):
-        return {"message": fallback_msg, "trades": [], "watchlist_changes": []}
+        return {"message": fallback_msg, "orders": [], "watchlist_changes": []}
 
     # Mechanical Buy / Purchase / Order
     buy_match = re.search(r'\b(?:buy|purchase|order)\s+(\d+)?\s*(?:shares?\s+of\s+)?([a-z]{1,5})\b', msg_lower)
@@ -51,15 +54,15 @@ def generate_mock_response(user_message: str):
     if buy_match:
         ticker = buy_match.group(2).upper()
         if ticker in ["ALL", "EVERYTHING", "THE", "MY", "POSITIONS"]:
-            return {"message": fallback_msg, "trades": [], "watchlist_changes": []}
+            return {"message": fallback_msg, "orders": [], "watchlist_changes": []}
         qty = int(buy_match.group(1)) if buy_match.group(1) else 1
-        trades.append({"ticker": ticker, "side": "buy", "quantity": qty})
+        orders.append({"action": "submit", "ticker": ticker, "side": "buy", "quantity": qty, "order_type": "market", "time_in_force": "day"})
         response_text = f"Executed purchase of {qty} share(s) of {ticker} at market price."
 
     elif sell_match:
         ticker = sell_match.group(2).upper()
         if ticker in ["ALL", "EVERYTHING", "POSITIONS", "PORTFOLIO", "THE", "MY"]:
-            return {"message": fallback_msg, "trades": [], "watchlist_changes": []}
+            return {"message": fallback_msg, "orders": [], "watchlist_changes": []}
         
         # Check active account positions to prevent short sales in deterministic engine
         active = get_active_account()
@@ -71,25 +74,25 @@ def generate_mock_response(user_message: str):
         owned_qty = sum(r["quantity"] for r in owned_rows) if owned_rows else 0.0
         
         if owned_qty <= 0:
-            return {"message": fallback_msg, "trades": [], "watchlist_changes": []}
+            return {"message": fallback_msg, "orders": [], "watchlist_changes": []}
 
         requested_qty = int(sell_match.group(1)) if sell_match.group(1) else int(owned_qty)
         qty = min(requested_qty, int(owned_qty))
         
-        trades.append({"ticker": ticker, "side": "sell", "quantity": qty})
+        orders.append({"action": "submit", "ticker": ticker, "side": "sell", "quantity": qty, "order_type": "market", "time_in_force": "day"})
         response_text = f"Executed sale of {qty} share(s) of {ticker} at market price."
 
     elif add_wl_match:
         ticker = add_wl_match.group(1).upper()
         if ticker in ["ALL", "THE", "MY"]:
-            return {"message": fallback_msg, "trades": [], "watchlist_changes": []}
+            return {"message": fallback_msg, "orders": [], "watchlist_changes": []}
         watchlist_changes.append({"ticker": ticker, "action": "add"})
         response_text = f"{ticker} has been added to your watchlist."
 
     elif rem_wl_match:
         ticker = rem_wl_match.group(1).upper()
         if ticker in ["ALL", "THE", "MY"]:
-            return {"message": fallback_msg, "trades": [], "watchlist_changes": []}
+            return {"message": fallback_msg, "orders": [], "watchlist_changes": []}
         watchlist_changes.append({"ticker": ticker, "action": "remove"})
         response_text = f"{ticker} has been removed from your watchlist."
 
@@ -101,7 +104,7 @@ def generate_mock_response(user_message: str):
 
     return {
         "message": response_text,
-        "trades": trades,
+        "orders": orders,
         "watchlist_changes": watchlist_changes
     }
 
@@ -216,7 +219,7 @@ def process_chat(user_message: str, portfolio_context: dict, chat_history: list)
     execute_query(
         "INSERT INTO chat_messages (id, user_id, role, content, actions, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         (str(uuid.uuid4()), "default", "assistant", response_data.get("message", ""), json.dumps({
-            "trades": response_data.get("trades", []),
+            "orders": response_data.get("orders", response_data.get("trades", [])),
             "watchlist_changes": response_data.get("watchlist_changes", [])
         }), datetime.now(timezone.utc).isoformat())
     )
