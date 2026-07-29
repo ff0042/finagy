@@ -65,7 +65,10 @@ def set_autonomy(req: AutonomySelectRequest):
 from fastapi import Form, HTTPException, Request
 import os
 from backend.scheduler import execute_background_task
-from twilio.request_validator import RequestValidator
+try:
+    from twilio.request_validator import RequestValidator
+except ImportError:
+    RequestValidator = None
 
 @router.post("/api/twilio/webhook")
 async def twilio_webhook(request: Request, Body: str = Form(...), From: str = Form(...)):
@@ -78,6 +81,8 @@ async def twilio_webhook(request: Request, Body: str = Form(...), From: str = Fo
     # 2. Cryptographic Signature Check
     auth_token = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
     if auth_token and auth_token != "your_twilio_auth_token_here":
+        if RequestValidator is None:
+            raise HTTPException(status_code=500, detail="Twilio package not installed")
         validator = RequestValidator(auth_token)
         signature = request.headers.get("X-Twilio-Signature", "")
         url = str(request.url).replace("http://", "https://") if request.headers.get("x-forwarded-proto") == "https" else str(request.url)
