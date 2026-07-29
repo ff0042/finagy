@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+import os
 import json
 import asyncio
 from backend.db.database import execute_query, get_active_account, set_active_account, list_accounts
-from backend.market_data import price_cache
+from backend.market_data import price_cache, get_market_data_provider
 from backend.schwab_service import schwab_service
 from backend.constants import DEFAULT_USER_ID, DEFAULT_ACCOUNT_ID
 from backend.trade_service import execute_actions
@@ -63,7 +64,8 @@ async def stream_prices(request: Request):
                 break
             prices = price_cache.get_all()
             yield f"data: {json.dumps(prices)}\n\n"
-            await asyncio.sleep(0.5)
+            tick_freq = float(os.getenv("TICK_FREQUENCY_SECONDS", "5.0"))
+            await asyncio.sleep(tick_freq)
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @router.get("/api/portfolio")
@@ -107,7 +109,14 @@ def get_portfolio():
                     if not ticker or instrument.get("assetType") == "CASH_EQUIVALENT" or ticker == "MMDA1":
                         continue
                         
+                    try:
+                        get_market_data_provider().add_ticker(ticker)
+                    except Exception:
+                        pass
+                        
                     asset_type = instrument.get("assetType", "EQUITY")
+                    if asset_type == "COLLECTIVE_INVESTMENT":
+                        asset_type = "ETF"
                     description = ticker
                     if asset_type == "OPTION":
                         description = parse_occ_symbol(ticker)
@@ -121,13 +130,51 @@ def get_portfolio():
                     if qty == 0:
                         continue
                         
-                    avg = p.get("averagePrice", 0.0)
-                    market_val = p.get("marketValue", 0.0)
+                    if qty > 0:
+                        avg = p.get("taxLotAverageLongPrice", p.get("averagePrice", 0.0))
+                    else:
+                        avg = p.get("averageShortPrice", p.get("averagePrice", 0.0))
+                        
+                    raw_market_val = p.get("marketValue", 0.0)
                     
+                    use_live = True
+                    try:
+                        import datetime
+                        try:
+                            from zoneinfo import ZoneInfo
+                            tz = ZoneInfo("America/New_York")
+                        except ImportError:
+                            import pytz
+                            tz = pytz.timezone("America/New_York")
+                            
+                        now = datetime.datetime.now(tz)
+                        if now.weekday() >= 5:
+                            use_live = False
+                        else:
+                            market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
+                            market_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
+                            if not (market_open <= now <= market_close):
+                                use_live = False
+                    except Exception:
+                        use_live = True
+
                     cp = price_cache.get(ticker)
-                    current_price = cp["price"] if cp else (market_val / qty if qty != 0 else avg)
+                    if cp and use_live:
+                        current_price = cp["price"]
+                    else:
+                        frozen_market_val = raw_market_val - p.get("currentDayProfitLoss", 0.0)
+                        if asset_type == "OPTION":
+                            current_price = frozen_market_val / (qty * 100) if qty != 0 else avg
+                        else:
+                            current_price = frozen_market_val / qty if qty != 0 else avg
                     
-                    cost = avg * qty
+                    if asset_type == "OPTION":
+                        market_val = current_price * qty * 100
+                        cost = avg * qty * 100
+                    else:
+                        market_val = current_price * qty
+                        cost = avg * qty
+                        
                     unrealized = market_val - cost
                     
                     total_pos_value += market_val
@@ -141,7 +188,8 @@ def get_portfolio():
                         "avg_cost": avg,
                         "current_price": current_price,
                         "market_value": market_val,
-                        "unrealized_pnl": unrealized
+                        "unrealized_pnl": unrealized,
+                        "live_pricing": use_live
                     })
                     
                 return {

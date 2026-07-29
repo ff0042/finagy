@@ -12,6 +12,7 @@ interface Position {
   current_price: number;
   market_value: number;
   unrealized_pnl: number;
+  live_pricing?: boolean;
 }
 
 export default function PositionsTable() {
@@ -27,7 +28,7 @@ export default function PositionsTable() {
         setPositions(data.positions || []);
         setCashBalance(data.cash_balance || 0);
       }
-    } catch (err) {}
+    } catch (err) { }
   }, []);
 
   useEffect(() => {
@@ -54,13 +55,13 @@ export default function PositionsTable() {
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refresh-workstation'));
       }
-    } catch (err) {}
+    } catch (err) { }
   };
 
   const equities = positions.filter(p => p.asset_type === 'EQUITY' || !p.asset_type).sort((a, b) => a.ticker.localeCompare(b.ticker));
   const funds = positions.filter(p => p.asset_type === 'MUTUAL_FUND' || p.asset_type === 'ETF').sort((a, b) => a.ticker.localeCompare(b.ticker));
   const options = positions.filter(p => p.asset_type === 'OPTION').sort((a, b) => (a.description || a.ticker).localeCompare(b.description || b.ticker));
-  
+
   const renderGroup = (title: string, groupPositions: Position[]) => {
     if (groupPositions.length === 0) return null;
     return (
@@ -70,9 +71,10 @@ export default function PositionsTable() {
         </tr>
         {groupPositions.map(p => {
           const liveData = prices[p.ticker];
-          const currentPrice = liveData ? liveData.price : p.current_price;
-          const pnl = (currentPrice - p.avg_cost) * p.quantity;
-          const pnlPercent = p.avg_cost ? ((currentPrice - p.avg_cost) / p.avg_cost) * 100 : 0;
+          const currentPrice = (liveData && p.live_pricing !== false) ? liveData.price : p.current_price;
+          const multiplier = p.asset_type === 'OPTION' ? 100 : 1;
+          const pnl = (currentPrice - p.avg_cost) * p.quantity * multiplier;
+          const pnlPercent = p.avg_cost ? ((currentPrice - p.avg_cost) / p.avg_cost) * 100 * Math.sign(p.quantity) : 0;
           const isPositive = pnl >= 0;
 
           return (
@@ -85,7 +87,7 @@ export default function PositionsTable() {
                 {isPositive ? '+' : '-'}${Math.abs(pnl).toFixed(2)} ({pnlPercent.toFixed(2)}%)
               </td>
               <td className="py-0.5 text-right">
-                <button 
+                <button
                   onClick={() => handleSell(p.ticker, p.quantity)}
                   className="px-2 py-0.5 bg-downtick text-white rounded text-[10px] opacity-0 group-hover:opacity-100 transition-opacity">
                   Sell

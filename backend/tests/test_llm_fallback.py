@@ -16,6 +16,7 @@ def test_openrouter_model_selection(monkeypatch):
         "trades": [],
         "watchlist_changes": []
     })
+    mock_response.choices[0].message.tool_calls = None
     
     with patch("backend.llm.llm_service.OpenAI") as mock_openai_cls:
         mock_client = MagicMock()
@@ -59,7 +60,7 @@ def test_llm_model_selection_endpoints():
     data = res.json()
     assert "active_model" in data
     assert "models" in data
-    assert len(data["models"]) == 6
+    assert len(data["models"]) == 7
     assert data["models"][0]["id"] == "mock/deterministic"
     assert data["models"][0]["cost_tier"] == "FREE"
 

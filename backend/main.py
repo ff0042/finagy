@@ -27,12 +27,14 @@ from datetime import datetime, timezone
 
 try:
     from backend.db.database import init_db, execute_query, get_active_account
+    from backend.scheduler import start_scheduler
     from backend.market_data import get_market_data_provider, price_cache
     from backend.schwab_service import schwab_service
     from backend.constants import DEFAULT_USER_ID, DEFAULT_ACCOUNT_ID
     from backend.routers import auth, portfolio, watchlist, llm
 except ModuleNotFoundError:
     from db.database import init_db, execute_query, get_active_account
+    from scheduler import start_scheduler
     from market_data import get_market_data_provider, price_cache
     from schwab_service import schwab_service
     from constants import DEFAULT_USER_ID, DEFAULT_ACCOUNT_ID
@@ -80,6 +82,9 @@ async def lifespan(app: FastAPI):
 
     logger.info("Initializing database...")
     init_db()
+    
+    # Start APScheduler
+    start_scheduler()
     
     logger.info("Starting market data provider...")
     market_provider = get_market_data_provider()
