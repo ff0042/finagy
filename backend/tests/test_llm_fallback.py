@@ -1,8 +1,8 @@
-import os
 import json
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 from backend.llm.llm_service import process_chat
+
 
 def test_openrouter_model_selection(monkeypatch):
     """Test that process_chat uses the specified OPENROUTER_MODEL from env."""

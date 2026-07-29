@@ -1,6 +1,7 @@
 
 import sys
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 # Ensure root and backend directory are in sys.path and load environment variables from .env
@@ -14,31 +15,31 @@ for p in [str(root_dir), str(backend_dir)]:
 load_dotenv(root_dir / ".env")
 load_dotenv(backend_dir / ".env")
 
-from contextlib import asynccontextmanager
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-import os
 import asyncio
 import logging
+import os
 import uuid
-from datetime import datetime, timezone
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 try:
-    from backend.db.database import init_db, execute_query, get_active_account
-    from backend.scheduler import start_scheduler
+    from backend.constants import DEFAULT_ACCOUNT_ID, DEFAULT_USER_ID
+    from backend.db.database import execute_query, get_active_account, init_db
     from backend.market_data import get_market_data_provider, price_cache
+    from backend.routers import auth, llm, portfolio, watchlist
+    from backend.scheduler import start_scheduler
     from backend.schwab_service import schwab_service
-    from backend.constants import DEFAULT_USER_ID, DEFAULT_ACCOUNT_ID
-    from backend.routers import auth, portfolio, watchlist, llm
 except ModuleNotFoundError:
-    from db.database import init_db, execute_query, get_active_account
-    from scheduler import start_scheduler
+    from constants import DEFAULT_ACCOUNT_ID, DEFAULT_USER_ID
+    from db.database import execute_query, get_active_account, init_db
     from market_data import get_market_data_provider, price_cache
-    from schwab_service import schwab_service
-    from constants import DEFAULT_USER_ID, DEFAULT_ACCOUNT_ID
-    from routers import auth, portfolio, watchlist, llm
+    from routers import auth, llm, portfolio, watchlist
+    from scheduler import start_scheduler
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -62,7 +63,7 @@ async def snapshot_task():
             
             execute_query(
                 "INSERT INTO portfolio_snapshots (id, user_id, account_id, total_value, recorded_at) VALUES (?, ?, ?, ?, ?)",
-                (str(uuid.uuid4()), DEFAULT_USER_ID, acct_id, total_value, datetime.now(timezone.utc).isoformat())
+                (str(uuid.uuid4()), DEFAULT_USER_ID, acct_id, total_value, datetime.now(UTC).isoformat())
             )
         except Exception as e:
             logger.error(f"Snapshot task error: {e}")
@@ -122,6 +123,7 @@ def health():
     return {'status': 'ok'}
 
 from fastapi import Request
+
 
 @app.get("/")
 def read_root(request: Request):

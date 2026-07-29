@@ -1,13 +1,16 @@
-from backend.trade_service import execute_actions
 import json
+import logging
 import os
 import re
 import uuid
-from datetime import datetime, timezone
-from openai import OpenAI
-from backend.db.database import execute_query, get_active_account
+from datetime import UTC, datetime
+
 import yfinance as yf
 from duckduckgo_search import DDGS
+from openai import OpenAI
+
+from backend.db.database import execute_query, get_active_account
+from backend.trade_service import execute_actions
 
 SYSTEM_PROMPT = """You are FinAlly, an expert AI portfolio strategist and trading workstation assistant.
 You analyze portfolio positions, cash balance, and watchlist prices to execute user requests and provide deep financial insights.
@@ -299,17 +302,17 @@ def execute_tool_call(tool_name: str, arguments: dict) -> str:
                 return f"Unknown data_type: {data_type}"
         elif tool_name == "send_sms":
             message = arguments.get("message")
-            print(f"\n[SMS SENT TO USER] {message}\n")
+            logging.info(f"[SMS SENT TO USER] {message}")
             return "SMS sent successfully."
         elif tool_name == "schedule_evaluation":
             cron = arguments.get("cron_expression")
             task = arguments.get("task_description")
             from backend.scheduler import add_cron_job
             job_id = add_cron_job(cron, task)
-            print(f"\n[SCHEDULER] Registered CRON '{cron}' for task: {task}. Job ID: {job_id}\n")
+            logging.info(f"[SCHEDULER] Registered CRON '{cron}' for task: {task}. Job ID: {job_id}")
             return f"Successfully scheduled background evaluation with cron '{cron}'. Job ID: {job_id}"
     except Exception as e:
-        return f"Error executing tool {tool_name}: {str(e)}"
+        return f"Error executing tool {tool_name}: {e!s}"
     return f"Unknown tool: {tool_name}"
 
 def process_chat(user_message: str, portfolio_context: dict, chat_history: list, is_background: bool = False):
@@ -377,7 +380,7 @@ def process_chat(user_message: str, portfolio_context: dict, chat_history: list,
                         except:
                             args = {}
                         
-                        print(f"[AI TOOL CALL] {tool_name}({args})")
+                        logging.info(f"[AI TOOL CALL] {tool_name}({args})")
                         result_str = execute_tool_call(tool_name, args)
                         
                         messages.append({
@@ -389,13 +392,11 @@ def process_chat(user_message: str, portfolio_context: dict, chat_history: list,
                     continue
                 
                 content = message.content or ""
-                print(f"[DEBUG OPENROUTER MESSAGE] {message}")
-                if hasattr(message, 'model_dump'):
-                    print(f"[DEBUG OPENROUTER DUMP] {message.model_dump()}")
+                logging.debug(f"[OPENROUTER MESSAGE] {message}")
                 
                 # If there's no content, but there's a reason/tool_calls, handle it
                 if not content and not message.tool_calls:
-                    print(f"[WARN] Empty content received from LLM")
+                    logging.warning("[WARN] Empty content received from LLM")
                 
                 # Try parsing as JSON by extracting the outermost JSON object
                 try:
@@ -412,7 +413,7 @@ def process_chat(user_message: str, portfolio_context: dict, chat_history: list,
                     else:
                         raise ValueError("No JSON object found in response")
                 except (json.JSONDecodeError, ValueError) as e:
-                    print(f"[WARN] Failed to parse JSON: {e}")
+                    logging.warning(f"Failed to parse LLM JSON response: {e}")
                     # Fallback if the model forgot to use JSON
                     response_data = {
                         "message": content,
@@ -425,21 +426,21 @@ def process_chat(user_message: str, portfolio_context: dict, chat_history: list,
                 response_data = generate_mock_response("Error: Max iterations reached without final answer.")
                 
         except Exception as e:
-            print(f"[WARN] LLM API error: {e}")
+            logging.warning(f"LLM API error: {e}")
             response_data = generate_mock_response(user_message)
 
     execute_actions(response_data)
     
     execute_query(
         "INSERT INTO chat_messages (id, user_id, role, content, actions, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (str(uuid.uuid4()), "default", "user", user_message, None, datetime.now(timezone.utc).isoformat())
+        (str(uuid.uuid4()), "default", "user", user_message, None, datetime.now(UTC).isoformat())
     )
     execute_query(
         "INSERT INTO chat_messages (id, user_id, role, content, actions, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         (str(uuid.uuid4()), "default", "assistant", response_data.get("message", ""), json.dumps({
             "orders": response_data.get("orders", response_data.get("trades", [])),
             "watchlist_changes": response_data.get("watchlist_changes", [])
-        }), datetime.now(timezone.utc).isoformat())
+        }), datetime.now(UTC).isoformat())
     )
     
     return response_data

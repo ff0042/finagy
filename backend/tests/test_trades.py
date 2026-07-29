@@ -1,16 +1,16 @@
-import pytest
 import uuid
-import os
-from datetime import datetime, timezone
-from backend.db.database import get_connection, execute_query, reset_session_state
+from datetime import UTC, datetime
+
+from backend.db.database import execute_query, reset_session_state
 from backend.trade_service import execute_actions
+
 
 def test_trade_sell():
     reset_session_state()
     # Seed a position
     execute_query(
         "INSERT INTO positions (id, user_id, account_id, ticker, quantity, avg_cost, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (str(uuid.uuid4()), "default", "acct_roth", "AAPL", 10.0, 150.0, datetime.now(timezone.utc).isoformat())
+        (str(uuid.uuid4()), "default", "acct_roth", "AAPL", 10.0, 150.0, datetime.now(UTC).isoformat())
     )
     # Perform sell
     execute_actions({
@@ -34,7 +34,7 @@ def test_session_reset():
     reset_session_state()
     execute_query(
         "INSERT INTO positions (id, user_id, account_id, ticker, quantity, avg_cost, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (str(uuid.uuid4()), "default", "acct_roth", "NVDA", 10.0, 150.0, datetime.now(timezone.utc).isoformat())
+        (str(uuid.uuid4()), "default", "acct_roth", "NVDA", 10.0, 150.0, datetime.now(UTC).isoformat())
     )
     reset_session_state("acct_roth")
     pos = execute_query("SELECT quantity FROM positions WHERE account_id = 'acct_roth'")
