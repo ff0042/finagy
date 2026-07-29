@@ -1,6 +1,7 @@
-import pytest
 from unittest.mock import MagicMock
+
 from backend.schwab_service import schwab_service
+
 
 def test_schwab_place_order_payloads():
     # Setup mock client to ensure NO real trades are placed

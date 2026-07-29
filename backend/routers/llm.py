@@ -1,11 +1,12 @@
 
 from fastapi import APIRouter
 from pydantic import BaseModel
-from backend.llm.llm_service import process_chat, get_active_model, set_active_model
+
+from backend.constants import DEFAULT_USER_ID
+from backend.db.database import execute_query
+from backend.llm.llm_service import get_active_model, process_chat, set_active_model
 from backend.routers.portfolio import get_portfolio
 from backend.routers.watchlist import get_watchlist
-from backend.db.database import execute_query
-from backend.constants import DEFAULT_USER_ID
 
 router = APIRouter()
 
@@ -32,7 +33,8 @@ def get_chat_history():
     rows = execute_query("SELECT role, content FROM chat_messages WHERE user_id = ? ORDER BY created_at ASC", (DEFAULT_USER_ID,))
     return [{"role": r["role"], "content": r["content"]} for r in rows]
 
-from backend.llm.llm_service import process_chat, get_active_model, set_active_model, AVAILABLE_MODELS
+from backend.llm.llm_service import AVAILABLE_MODELS
+
 
 class ModelSelectRequest(BaseModel):
     model: str
@@ -50,6 +52,7 @@ def select_model(req: ModelSelectRequest):
 
 from backend.llm.llm_service import get_autonomous_mode, set_autonomous_mode
 
+
 class AutonomySelectRequest(BaseModel):
     enabled: bool
 
@@ -62,9 +65,13 @@ def set_autonomy(req: AutonomySelectRequest):
     updated = set_autonomous_mode(req.enabled)
     return {"status": "ok", "enabled": updated}
 
-from fastapi import Form, HTTPException, Request
+import logging
 import os
+
+from fastapi import Form, HTTPException, Request
+
 from backend.scheduler import execute_background_task
+
 try:
     from twilio.request_validator import RequestValidator
 except ImportError:
@@ -75,7 +82,7 @@ async def twilio_webhook(request: Request, Body: str = Form(...), From: str = Fo
     # 1. Caller ID Check
     allowed_number = os.getenv("USER_PHONE_NUMBER", "").strip()
     if not allowed_number or From != allowed_number:
-        print(f"\n[SECURITY ALERT] Rejected unauthorized SMS from {From}\n")
+        logging.warning(f"[SECURITY ALERT] Rejected unauthorized SMS from {From}")
         raise HTTPException(status_code=403, detail="Unauthorized sender")
 
     # 2. Cryptographic Signature Check
@@ -90,10 +97,10 @@ async def twilio_webhook(request: Request, Body: str = Form(...), From: str = Fo
         post_vars = {k: v for k, v in form_data.items()}
         
         if not validator.validate(url, post_vars, signature):
-            print(f"\n[SECURITY ALERT] Invalid Twilio Signature detected!\n")
+            logging.warning("[SECURITY ALERT] Invalid Twilio Signature detected!")
             raise HTTPException(status_code=403, detail="Invalid Twilio Signature")
 
-    print(f"\n[TWILIO WEBHOOK] Received text from {From}: {Body}\n")
+    logging.info(f"[TWILIO WEBHOOK] Received text from {From}: {Body}")
     # Trigger background evaluation with user's text as the prompt
     execute_background_task(f"User replied via SMS: {Body}")
     return {"status": "ok"}

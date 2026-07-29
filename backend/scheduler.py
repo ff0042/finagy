@@ -1,7 +1,8 @@
+import json
+import logging
+
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-import logging
-import json
 
 scheduler = BackgroundScheduler()
 
@@ -11,13 +12,13 @@ def start_scheduler():
         logging.info("Background Scheduler started.")
 
 def execute_background_task(task_description: str):
+    from backend.constants import DEFAULT_USER_ID
+    from backend.db.database import execute_query
     from backend.llm.llm_service import process_chat
     from backend.routers.portfolio import get_portfolio
     from backend.routers.watchlist import get_watchlist
-    from backend.db.database import execute_query
-    from backend.constants import DEFAULT_USER_ID
 
-    print(f"\n[BACKGROUND JOB TRIGGERED] Task: {task_description}\n")
+    logging.info(f"[BACKGROUND JOB TRIGGERED] Task: {task_description}")
     portfolio = get_portfolio()
     wl = get_watchlist()
     context = {
@@ -38,7 +39,7 @@ def execute_background_task(task_description: str):
     # Save the AI's response
     execute_query("INSERT INTO chat_messages (user_id, role, content) VALUES (?, ?, ?)", (DEFAULT_USER_ID, "assistant", json.dumps(res)))
     
-    print("\n[BACKGROUND JOB COMPLETED]\n")
+    logging.info("[BACKGROUND JOB COMPLETED]")
 
 def add_cron_job(cron_expression: str, task_description: str):
     try:
@@ -46,4 +47,4 @@ def add_cron_job(cron_expression: str, task_description: str):
         job = scheduler.add_job(execute_background_task, trigger, args=[task_description])
         return job.id
     except Exception as e:
-        raise ValueError(f"Invalid cron expression: {str(e)}")
+        raise ValueError(f"Invalid cron expression: {e!s}")

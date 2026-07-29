@@ -1,9 +1,10 @@
 
 from fastapi import APIRouter
 from pydantic import BaseModel
+
+from backend.constants import DEFAULT_ACCOUNT_ID, DEFAULT_USER_ID
 from backend.db.database import execute_query, get_active_account
 from backend.market_data import price_cache
-from backend.constants import DEFAULT_USER_ID, DEFAULT_ACCOUNT_ID
 from backend.trade_service import execute_actions
 
 router = APIRouter()

@@ -1,18 +1,16 @@
-import os
-import json
-import ssl
-import threading
-import urllib.parse
-import sqlite3
 import base64
-import requests
 import datetime
-import time
-import logging
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from pathlib import Path
-from typing import Dict, Any, List, Optional
 import ipaddress
+import json
+import logging
+import os
+import sqlite3
+import time
+import urllib.parse
+from pathlib import Path
+from typing import Any
+
+import requests
 
 # Resolve persistent DB path (survives container restarts)
 if os.path.exists("/app/db"):
@@ -33,9 +31,9 @@ def ensure_ssl_certs():
     DB_DIR.mkdir(parents=True, exist_ok=True)
     try:
         from cryptography import x509
-        from cryptography.x509.oid import NameOID
         from cryptography.hazmat.primitives import hashes, serialization
         from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.x509.oid import NameOID
 
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         name = x509.Name([
@@ -47,7 +45,7 @@ def ensure_ssl_certs():
             x509.DNSName("localhost")
         ])
 
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.UTC)
         cert = x509.CertificateBuilder().subject_name(
             name
         ).issuer_name(
@@ -72,7 +70,7 @@ def ensure_ssl_certs():
         cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
         return True
     except Exception as e:
-        print(f"[WARN] Failed to generate SSL certificates: {e}")
+        logging.warning(f"Failed to generate SSL certificates: {e}")
         return False
 
 class SchwabService:
@@ -107,8 +105,8 @@ class SchwabService:
                     issued_str = row[2].replace("Z", "+00:00")
                     issued_dt = datetime.datetime.fromisoformat(issued_str)
                     if issued_dt.tzinfo is None:
-                        issued_dt = issued_dt.replace(tzinfo=datetime.timezone.utc)
-                    now_dt = datetime.datetime.now(datetime.timezone.utc)
+                        issued_dt = issued_dt.replace(tzinfo=datetime.UTC)
+                    now_dt = datetime.datetime.now(datetime.UTC)
                     # Refresh tokens expire after 7 days
                     if (now_dt - issued_dt).total_seconds() < 6.5 * 86400:
                         has_valid_db_token = True
@@ -126,8 +124,8 @@ class SchwabService:
                         issued_str = issued_str.replace("Z", "+00:00")
                         issued_dt = datetime.datetime.fromisoformat(issued_str)
                         if issued_dt.tzinfo is None:
-                            issued_dt = issued_dt.replace(tzinfo=datetime.timezone.utc)
-                        now_dt = datetime.datetime.now(datetime.timezone.utc)
+                            issued_dt = issued_dt.replace(tzinfo=datetime.UTC)
+                        now_dt = datetime.datetime.now(datetime.UTC)
                         if (now_dt - issued_dt).total_seconds() < 6.5 * 86400:
                             has_valid_file_token = True
             except Exception:
@@ -155,7 +153,7 @@ class SchwabService:
                     tokens_file=str(TOKENS_FILE_PATH)
                 )
         except Exception as e:
-            print(f"[WARN] schwabdev initialization: {e}")
+            logging.warning(f"schwabdev initialization: {e}")
             self.client = None
 
     def get_auth_url(self) -> str:
@@ -169,7 +167,7 @@ class SchwabService:
         }
         return f"https://api.schwabapi.com/v1/oauth/authorize?{urllib.parse.urlencode(params)}"
 
-    def exchange_code_for_tokens(self, code: str) -> Dict[str, Any]:
+    def exchange_code_for_tokens(self, code: str) -> dict[str, Any]:
         """Exchange authorization code directly for tokens and write to persistent TOKENS_DB_PATH and TOKENS_FILE_PATH."""
         app_key = os.getenv("SCHWAB_CLIENT_ID") or os.getenv("SCHWAB_APP_KEY")
         app_secret = os.getenv("SCHWAB_CLIENT_SECRET") or os.getenv("SCHWAB_APP_SECRET")
@@ -180,7 +178,7 @@ class SchwabService:
 
         raw_code = urllib.parse.unquote(code)
 
-        auth_str = base64.b64encode(f"{app_key}:{app_secret}".encode("utf-8")).decode("utf-8")
+        auth_str = base64.b64encode(f"{app_key}:{app_secret}".encode()).decode("utf-8")
         headers = {
             "Authorization": f"Basic {auth_str}",
             "Content-Type": "application/x-www-form-urlencoded"
@@ -200,16 +198,16 @@ class SchwabService:
                 self._init_client()
                 return {"success": True, "tokens": tokens_dict}
             else:
-                print(f"[WARN] Token exchange failed HTTP {resp.status_code}: {resp.text}")
+                logging.warning(f"Token exchange failed HTTP {resp.status_code}: {resp.text}")
                 return {"success": False, "status_code": resp.status_code, "error": resp.text}
         except Exception as e:
-            print(f"[WARN] Token exchange exception: {e}")
+            logging.warning(f"Token exchange exception: {e}")
             return {"success": False, "error": str(e)}
 
     def _write_tokens_to_db(self, tokens_db_path: Path, tokens_data: dict):
         """Direct SQLite writer matching schwabdev table schema exactly."""
         try:
-            now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            now = datetime.datetime.now(datetime.UTC).isoformat()
             conn = sqlite3.connect(str(tokens_db_path))
             cur = conn.cursor()
             cur.execute("""
@@ -248,14 +246,14 @@ class SchwabService:
             ))
             conn.commit()
             conn.close()
-            print(f"[SUCCESS] Successfully saved OAuth tokens into persistent {tokens_db_path} (table schwabdev).")
+            logging.info(f"Successfully saved OAuth tokens into persistent {tokens_db_path} (table schwabdev).")
         except Exception as e:
-            print(f"[WARN] Failed to write tokens to DB: {e}")
+            logging.warning(f"Failed to write tokens to DB: {e}")
 
     def _write_tokens_to_file(self, tokens_file_path: Path, tokens_data: dict):
         """Write JSON format matching schwabdev token specification."""
         try:
-            now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            now_iso = datetime.datetime.now(datetime.UTC).isoformat()
             formatted = {
                 "access_token_issued": now_iso,
                 "refresh_token_issued": now_iso,
@@ -264,9 +262,9 @@ class SchwabService:
             tokens_file_path.parent.mkdir(parents=True, exist_ok=True)
             with open(tokens_file_path, "w", encoding="utf-8") as f:
                 json.dump(formatted, f, indent=4)
-            print(f"[SUCCESS] Successfully saved OAuth tokens into persistent {tokens_file_path}")
+            logging.info(f"Successfully saved OAuth tokens into persistent {tokens_file_path}")
         except Exception as e:
-            print(f"[WARN] Failed to write tokens to file: {e}")
+            logging.warning(f"Failed to write tokens to file: {e}")
 
     def disconnect(self) -> bool:
         """Clear saved Schwab tokens and reset active client."""
@@ -286,13 +284,13 @@ class SchwabService:
                     os.remove(TOKENS_FILE_PATH)
                 except Exception:
                     pass
-            print("[INFO] Successfully disconnected and cleared Schwab tokens")
+            logging.info("Successfully disconnected and cleared Schwab tokens")
             return True
         except Exception as e:
-            print(f"[WARN] Error disconnecting Schwab tokens: {e}")
+            logging.warning(f"Error disconnecting Schwab tokens: {e}")
             return False
 
-    def get_token_status(self) -> Dict[str, Any]:
+    def get_token_status(self) -> dict[str, Any]:
         """Check if client is active and tokens are valid."""
         if not self.client:
             return {"authenticated": False, "reason": "Client not initialized or credentials missing"}
@@ -317,7 +315,7 @@ class SchwabService:
         except Exception as e:
             return {"authenticated": False, "reason": str(e)}
 
-    def get_linked_accounts(self) -> List[Dict[str, Any]]:
+    def get_linked_accounts(self) -> list[dict[str, Any]]:
         """Fetch linked accounts via client.linked_accounts() and hydrate real cash balances."""
         if not self.client:
             return []
@@ -345,7 +343,7 @@ class SchwabService:
                             balances = details.get("securitiesAccount", {}).get("currentBalances", {})
                             cash_bal = balances.get("cashBalance", 0.0)
                     except Exception as ex:
-                        print(f"[WARN] Error fetching cash balance for account {acct_num}: {ex}")
+                        logging.warning(f"Error fetching cash balance for account {acct_num}: {ex}")
 
                     accounts.append({
                         "id": f"schwab_{acct_hash[:8]}",
@@ -360,10 +358,10 @@ class SchwabService:
                 self._linked_accts_ts = now_time
                 return accounts
         except Exception as e:
-            print(f"[WARN] Error fetching linked accounts: {e}")
+            logging.warning(f"Error fetching linked accounts: {e}")
         return []
 
-    def get_account_details(self, account_hash: str) -> Optional[Dict[str, Any]]:
+    def get_account_details(self, account_hash: str) -> dict[str, Any] | None:
         """Fetch account positions and balances via client.account_details()."""
         if not self.client:
             return None
@@ -381,10 +379,10 @@ class SchwabService:
                 self._acct_details_cache[account_hash] = (now_time, data)
                 return data
         except Exception as e:
-            print(f"[WARN] Error fetching account details: {e}")
+            logging.warning(f"Error fetching account details: {e}")
         return None
 
-    def place_market_order(self, account_hash: str, ticker: str, quantity: float, side: str) -> Dict[str, Any]:
+    def place_market_order(self, account_hash: str, ticker: str, quantity: float, side: str) -> dict[str, Any]:
         """Place an equity market order via client.order_place()."""
         if not self.client:
             return {"success": False, "error": "Schwab client not initialized"}
@@ -417,7 +415,7 @@ class SchwabService:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def place_order(self, account_hash: str, ticker: str, quantity: float, side: str, order_type: str = "MARKET", limit_price: float = None, stop_price: float = None, duration: str = "DAY") -> Dict[str, Any]:
+    def place_order(self, account_hash: str, ticker: str, quantity: float, side: str, order_type: str = "MARKET", limit_price: float = None, stop_price: float = None, duration: str = "DAY") -> dict[str, Any]:
         """Place an equity order with advanced parameters via client.order_place()."""
         if not self.client:
             return {"success": False, "error": "Schwab client not initialized"}
@@ -461,7 +459,7 @@ class SchwabService:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def cancel_order(self, account_hash: str, order_id: str) -> Dict[str, Any]:
+    def cancel_order(self, account_hash: str, order_id: str) -> dict[str, Any]:
         """Cancel a working order."""
         if not self.client:
             return {"success": False, "error": "Schwab client not initialized"}
@@ -475,7 +473,7 @@ class SchwabService:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def get_orders(self, account_hash: str) -> Dict[str, Any]:
+    def get_orders(self, account_hash: str) -> dict[str, Any]:
         """Get all orders for the account."""
         if not self.client:
             return {"success": False, "error": "Schwab client not initialized"}

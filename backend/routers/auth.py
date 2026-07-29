@@ -1,13 +1,17 @@
 
-from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import RedirectResponse, HTMLResponse
-import os
-import json
-from datetime import datetime, timezone
-from backend.db.database import execute_query, get_active_account, set_active_account, reset_session_state
-from backend.schwab_service import schwab_service
-from backend.constants import DEFAULT_USER_ID, DEFAULT_ACCOUNT_ID, INITIAL_CASH_BALANCE
 import logging
+from datetime import UTC, datetime
+
+from fastapi import APIRouter, Request
+from fastapi.responses import HTMLResponse
+
+from backend.constants import DEFAULT_USER_ID, INITIAL_CASH_BALANCE
+from backend.db.database import (
+    execute_query,
+    reset_session_state,
+    set_active_account,
+)
+from backend.schwab_service import schwab_service
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +43,7 @@ def schwab_callback(request: Request):
     if res.get("success"):
         try:
             accounts = schwab_service.get_linked_accounts()
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             for i, acc in enumerate(accounts):
                 acc_hash = acc.get("account_hash")
                 acc_num = acc.get("account_number")
@@ -78,6 +82,7 @@ def reset_session():
     return {"status": "ok"}
 
 from pathlib import Path
+
 
 def _render_html(success, error_msg):
     template_path = Path(__file__).resolve().parent.parent / "templates" / "schwab_success.html"

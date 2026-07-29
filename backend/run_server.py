@@ -1,8 +1,12 @@
+import logging
 import os
 import sys
-import uvicorn
 from pathlib import Path
+
+import uvicorn
 from dotenv import load_dotenv
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 # Ensure both project root and backend directory are in sys.path
 root_dir = Path(__file__).resolve().parent.parent
@@ -26,8 +30,8 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 8080))
     
     if cert and key:
-        print(f"[INFO] Starting HTTPS Uvicorn Server on 0.0.0.0:{port} with SSL...")
+        logging.info(f"Starting HTTPS Uvicorn Server on 0.0.0.0:{port} with SSL...")
         uvicorn.run("main:app", host="0.0.0.0", port=port, ssl_keyfile=key, ssl_certfile=cert)
     else:
-        print(f"[INFO] Starting HTTP Uvicorn Server on 0.0.0.0:{port}...")
+        logging.info(f"Starting HTTP Uvicorn Server on 0.0.0.0:{port}...")
         uvicorn.run("main:app", host="0.0.0.0", port=port)

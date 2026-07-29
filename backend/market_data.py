@@ -1,15 +1,16 @@
 import abc
+import concurrent.futures
+import json
+import logging
+import math
 import os
+import random
 import threading
 import time
-import math
-import random
 import urllib.request
-import json
-import concurrent.futures
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Dict, Any, List, Set
+from datetime import UTC, datetime
+from typing import Any
+
 
 class PriceCache:
     def __init__(self):
@@ -26,10 +27,10 @@ class PriceCache:
                 "prev_price": prev_price,
                 "change": change,
                 "change_percent": change_percent,
-                "timestamp": datetime.now(timezone.utc).isoformat()
+                "timestamp": datetime.now(UTC).isoformat()
             }
             
-    def get_all(self) -> Dict[str, Any]:
+    def get_all(self) -> dict[str, Any]:
         with self._lock:
             return dict(self._cache)
             
@@ -72,7 +73,7 @@ def fetch_real_market_price(ticker: str) -> float:
 
 class BaseMarketData(abc.ABC):
     @abc.abstractmethod
-    def start(self, tickers: List[str]):
+    def start(self, tickers: list[str]):
         pass
 
     @abc.abstractmethod
@@ -83,10 +84,10 @@ class SchwabMarketData(BaseMarketData):
     """Schwab Developer API Market Data Provider using schwabdev library."""
     def __init__(self):
         self.running = False
-        self.tickers: Set[str] = set()
+        self.tickers: set[str] = set()
         self._lock = threading.Lock()
 
-    def start(self, tickers: List[str]):
+    def start(self, tickers: list[str]):
         with self._lock:
             self.tickers = set(t.upper() for t in tickers)
         self.running = True
@@ -155,9 +156,9 @@ class GBMMarketSimulator(BaseMarketData):
     def __init__(self):
         self.running = False
         self._lock = threading.Lock()
-        self.tickers: Set[str] = set()
+        self.tickers: set[str] = set()
         
-    def start(self, tickers: List[str]):
+    def start(self, tickers: list[str]):
         with self._lock:
             self.tickers = set(t.upper() for t in tickers)
         self.running = True
@@ -219,9 +220,9 @@ class MassiveMarketData(BaseMarketData):
         self.api_key = api_key
         self.running = False
         self._lock = threading.Lock()
-        self.tickers: Set[str] = set()
+        self.tickers: set[str] = set()
 
-    def start(self, tickers: List[str]):
+    def start(self, tickers: list[str]):
         with self._lock:
             self.tickers = set(t.upper() for t in tickers)
         self.running = True
@@ -256,7 +257,7 @@ def get_market_data_provider() -> BaseMarketData:
             from backend.schwab_service import schwab_service
             if schwab_service.get_token_status().get("authenticated"):
                 _provider_instance = SchwabMarketData()
-                print("[INFO] Initialized Schwab Developer API Market Data Provider.")
+                logging.info("[INFO] Initialized Schwab Developer API Market Data Provider.")
             elif os.getenv("MASSIVE_API_KEY"):
                 _provider_instance = MassiveMarketData(os.getenv("MASSIVE_API_KEY"))
             else:

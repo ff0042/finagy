@@ -1,15 +1,15 @@
-import uuid
 import logging
-from datetime import datetime, timezone
-from backend.db.database import get_connection, execute_query, get_active_account
+import uuid
+from datetime import UTC, datetime
+
+from backend.constants import DEFAULT_ACCOUNT_ID, DEFAULT_USER_ID
+from backend.db.database import execute_query, get_active_account, get_connection
 from backend.market_data import get_market_data_provider, price_cache
 from backend.schwab_service import schwab_service
-from backend.constants import DEFAULT_USER_ID, DEFAULT_ACCOUNT_ID
 
 logger = logging.getLogger(__name__)
 
 def execute_actions(response_data, account_id=None):
-    trades = response_data.get("trades", [])
     watchlist_changes = response_data.get("watchlist_changes", [])
     
     market_provider = get_market_data_provider()
@@ -36,7 +36,7 @@ def execute_actions(response_data, account_id=None):
             try:
                 execute_query(
                     "INSERT INTO watchlist (id, user_id, account_id, ticker, added_at) VALUES (?, ?, ?, ?, ?)",
-                    (str(uuid.uuid4()), DEFAULT_USER_ID, acct_id, ticker, datetime.now(timezone.utc).isoformat())
+                    (str(uuid.uuid4()), DEFAULT_USER_ID, acct_id, ticker, datetime.now(UTC).isoformat())
                 )
             except Exception as e:
                 logger.warning(f"Failed to add {ticker} to watchlist: {e}")
@@ -72,11 +72,11 @@ def execute_actions(response_data, account_id=None):
                 else:
                     # Mark canceled in DB
                     execute_query("UPDATE orders SET status = 'CANCELED', updated_at = ? WHERE broker_order_id = ?", 
-                                  (datetime.now(timezone.utc).isoformat(), order_id))
+                                  (datetime.now(UTC).isoformat(), order_id))
             else:
                 # Cancel local order
                 execute_query("UPDATE orders SET status = 'CANCELED', updated_at = ? WHERE id = ?", 
-                              (datetime.now(timezone.utc).isoformat(), order_id))
+                              (datetime.now(UTC).isoformat(), order_id))
             continue
             
         # Submit new order
@@ -104,7 +104,7 @@ def execute_actions(response_data, account_id=None):
                 # Insert into local orders table
                 execute_query(
                     "INSERT INTO orders (id, user_id, account_id, ticker, side, quantity, order_type, limit_price, stop_price, time_in_force, status, broker_order_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (str(uuid.uuid4()), DEFAULT_USER_ID, acct_id, ticker, side, quantity, order_type.upper(), limit_price, stop_price, tif.upper(), status, broker_order_id, datetime.now(timezone.utc).isoformat())
+                    (str(uuid.uuid4()), DEFAULT_USER_ID, acct_id, ticker, side, quantity, order_type.upper(), limit_price, stop_price, tif.upper(), status, broker_order_id, datetime.now(UTC).isoformat())
                 )
         else:
             # Local execution with transaction
@@ -126,7 +126,7 @@ def execute_actions(response_data, account_id=None):
                 pos_qty = position[0] if position else 0
                 avg_cost = position[1] if position else 0
                 
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 
                 # Pre-trade validation
                 if side == "buy" and cash < total_cost:

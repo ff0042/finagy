@@ -1,17 +1,19 @@
 import os
+
 import pytest
 from fastapi.testclient import TestClient
 
 # Set mock environment for tests before importing main
 os.environ["LLM_MOCK"] = "true"
 
+from backend.db.database import execute_query, init_db
 from backend.main import app
-from backend.db.database import init_db, execute_query, DB_PATH
 from backend.market_data import price_cache
 
 client = TestClient(app)
 
 from backend.schwab_service import schwab_service
+
 
 @pytest.fixture(autouse=True)
 def setup_db():

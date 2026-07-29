@@ -1,13 +1,21 @@
-from fastapi import APIRouter, Request, HTTPException
+import asyncio
+import json
+import logging
+import os
+
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-import os
-import json
-import asyncio
-from backend.db.database import execute_query, get_active_account, set_active_account, list_accounts
-from backend.market_data import price_cache, get_market_data_provider
+
+from backend.constants import DEFAULT_ACCOUNT_ID, DEFAULT_USER_ID
+from backend.db.database import (
+    execute_query,
+    get_active_account,
+    list_accounts,
+    set_active_account,
+)
+from backend.market_data import get_market_data_provider, price_cache
 from backend.schwab_service import schwab_service
-from backend.constants import DEFAULT_USER_ID, DEFAULT_ACCOUNT_ID
 from backend.trade_service import execute_actions
 
 router = APIRouter()
@@ -200,7 +208,7 @@ def get_portfolio():
                     "total_pnl": total_pos_value - total_cost
                 }
         except Exception as e:
-            print(f"[WARN] Error fetching Schwab portfolio: {e}")
+            logging.warning(f"Error fetching Schwab portfolio: {e}")
 
         return {
             "account": active,
