@@ -9,9 +9,11 @@ export interface Position {
   ticker: string;
   quantity: number;
   avg_cost: number;
+  asset_type?: string;
   current_price?: number;
   market_value?: number;
   unrealized_pnl?: number;
+  live_pricing?: boolean;
 }
 
 export interface Portfolio {

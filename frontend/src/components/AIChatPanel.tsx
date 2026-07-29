@@ -2,6 +2,8 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User, Zap, Loader2 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -103,8 +105,14 @@ export default function AIChatPanel() {
             <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${m.role === 'user' ? 'bg-primary' : 'bg-submit'}`}>
               {m.role === 'user' ? <User size={16} /> : <Bot size={16} />}
             </div>
-            <div className={`rounded-lg p-3 max-w-[85%] ${m.role === 'user' ? 'bg-primary/20 text-right' : 'bg-card2'}`}>
-              <p className="text-sm">{m.text}</p>
+            <div className={`rounded-lg p-3 max-w-[85%] ${m.role === 'user' ? 'bg-primary/20 text-right' : 'bg-card2 text-left'}`}>
+              <div className={`text-sm ${m.role === 'assistant' ? 'markdown-content' : ''}`}>
+                {m.role === 'assistant' ? (
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
+                ) : (
+                  <p>{m.text}</p>
+                )}
+              </div>
               
               {m.actions?.trades && m.actions.trades.length > 0 && (
                 <div className="mt-2 text-xs bg-black/40 p-1.5 rounded text-uptick font-mono">

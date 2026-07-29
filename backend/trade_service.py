@@ -49,11 +49,44 @@ def execute_actions(response_data, account_id=None):
             
     is_schwab = (acct_type == "SCHWAB") and schwab_service.get_token_status().get("authenticated", False) and acct_hash
 
-    # Process Trades
-    for t in trades:
-        ticker = t.get("ticker", "").upper()
-        side = t.get("side", "").lower()
-        quantity = float(t.get("quantity", 0))
+    # Process Orders/Trades
+    orders = response_data.get("orders", [])
+    
+    # Backwards compatibility with previous "trades" key
+    if not orders and "trades" in response_data:
+        for t in response_data["trades"]:
+            t["action"] = "submit"
+            t["order_type"] = "market"
+            orders.append(t)
+
+    for o in orders:
+        action = o.get("action", "submit").lower()
+        
+        if action == "cancel":
+            order_id = o.get("order_id")
+            if not order_id: continue
+            if is_schwab:
+                res = schwab_service.cancel_order(acct_hash, order_id)
+                if not res.get("success"):
+                    logger.error(f"Schwab cancel order failed: {res}")
+                else:
+                    # Mark canceled in DB
+                    execute_query("UPDATE orders SET status = 'CANCELED', updated_at = ? WHERE broker_order_id = ?", 
+                                  (datetime.now(timezone.utc).isoformat(), order_id))
+            else:
+                # Cancel local order
+                execute_query("UPDATE orders SET status = 'CANCELED', updated_at = ? WHERE id = ?", 
+                              (datetime.now(timezone.utc).isoformat(), order_id))
+            continue
+            
+        # Submit new order
+        ticker = o.get("ticker", "").upper()
+        side = o.get("side", "").lower()
+        quantity = float(o.get("quantity", 0))
+        order_type = o.get("order_type", "market").lower()
+        limit_price = o.get("limit_price")
+        stop_price = o.get("stop_price")
+        tif = o.get("time_in_force", "day").lower()
         
         if quantity <= 0 or not ticker:
             continue
@@ -61,11 +94,18 @@ def execute_actions(response_data, account_id=None):
         market_provider.add_ticker(ticker)
         
         if is_schwab:
-            # Execute via Schwab API only, no local DB writes
-            logger.info(f"Executing Schwab order: {side} {quantity} {ticker}")
-            res = schwab_service.place_market_order(acct_hash, ticker, quantity, side)
+            logger.info(f"Executing Schwab order: {side} {quantity} {ticker} {order_type}")
+            res = schwab_service.place_order(acct_hash, ticker, quantity, side, order_type, limit_price, stop_price, tif)
             if not res.get("success"):
-                logger.error(f"Schwab market order failed: {res}")
+                logger.error(f"Schwab order failed: {res}")
+            else:
+                broker_order_id = res.get("order_id", "UNKNOWN")
+                status = "WORKING" if order_type != "market" else "FILLED"
+                # Insert into local orders table
+                execute_query(
+                    "INSERT INTO orders (id, user_id, account_id, ticker, side, quantity, order_type, limit_price, stop_price, time_in_force, status, broker_order_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (str(uuid.uuid4()), DEFAULT_USER_ID, acct_id, ticker, side, quantity, order_type.upper(), limit_price, stop_price, tif.upper(), status, broker_order_id, datetime.now(timezone.utc).isoformat())
+                )
         else:
             # Local execution with transaction
             with get_connection() as conn:
@@ -75,9 +115,11 @@ def execute_actions(response_data, account_id=None):
                 acct_row = cursor.fetchone()
                 cash = acct_row[0] if acct_row else 0.0
                 
+                # Determine execution price
                 current_price = price_cache.get(ticker)
-                price = current_price["price"] if current_price else 150.0
-                total_cost = price * quantity
+                market_price = current_price["price"] if current_price else 150.0
+                exec_price = limit_price if limit_price else market_price
+                total_cost = exec_price * quantity
                 
                 cursor.execute("SELECT quantity, avg_cost FROM positions WHERE user_id = ? AND account_id = ? AND ticker = ?", (DEFAULT_USER_ID, acct_id, ticker))
                 position = cursor.fetchone()
@@ -86,11 +128,27 @@ def execute_actions(response_data, account_id=None):
                 
                 now = datetime.now(timezone.utc).isoformat()
                 
-                if side == "buy":
-                    if cash < total_cost:
-                        logger.warning(f"Insufficient funds for local buy: {ticker}")
-                        continue
+                # Pre-trade validation
+                if side == "buy" and cash < total_cost:
+                    logger.warning(f"Insufficient funds for local buy: {ticker}")
+                    continue
+                if side == "sell" and pos_qty < quantity:
+                    logger.warning(f"Insufficient position for local sell: {ticker}")
+                    continue
                     
+                # Insert order
+                order_id = str(uuid.uuid4())
+                status = "WORKING" if order_type != "market" else "FILLED"
+                cursor.execute(
+                    "INSERT INTO orders (id, user_id, account_id, ticker, side, quantity, order_type, limit_price, stop_price, time_in_force, status, broker_order_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (order_id, DEFAULT_USER_ID, acct_id, ticker, side, quantity, order_type.upper(), limit_price, stop_price, tif.upper(), status, None, now)
+                )
+                
+                if status == "WORKING":
+                    conn.commit()
+                    continue
+                
+                if side == "buy":
                     new_cash = cash - total_cost
                     new_qty = pos_qty + quantity
                     new_avg = ((pos_qty * avg_cost) + total_cost) / new_qty if new_qty > 0 else 0
@@ -105,13 +163,9 @@ def execute_actions(response_data, account_id=None):
                                       (str(uuid.uuid4()), DEFAULT_USER_ID, acct_id, ticker, new_qty, new_avg, now))
                                       
                     cursor.execute("INSERT INTO trades (id, user_id, account_id, ticker, side, quantity, price, executed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                                  (str(uuid.uuid4()), DEFAULT_USER_ID, acct_id, ticker, side, quantity, price, now))
+                                  (str(uuid.uuid4()), DEFAULT_USER_ID, acct_id, ticker, side, quantity, exec_price, now))
                                   
                 elif side == "sell":
-                    if pos_qty < quantity:
-                        logger.warning(f"Insufficient position for local sell: {ticker}")
-                        continue
-                        
                     new_cash = cash + total_cost
                     new_qty = pos_qty - quantity
                     
@@ -124,6 +178,6 @@ def execute_actions(response_data, account_id=None):
                         cursor.execute("DELETE FROM positions WHERE user_id = ? AND account_id = ? AND ticker = ?", (DEFAULT_USER_ID, acct_id, ticker))
                         
                     cursor.execute("INSERT INTO trades (id, user_id, account_id, ticker, side, quantity, price, executed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                                  (str(uuid.uuid4()), DEFAULT_USER_ID, acct_id, ticker, side, quantity, price, now))
+                                  (str(uuid.uuid4()), DEFAULT_USER_ID, acct_id, ticker, side, quantity, exec_price, now))
                 
                 conn.commit()

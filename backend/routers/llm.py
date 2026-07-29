@@ -47,3 +47,53 @@ def get_models():
 def select_model(req: ModelSelectRequest):
     updated = set_active_model(req.model)
     return {"status": "ok", "active_model": updated}
+
+from backend.llm.llm_service import get_autonomous_mode, set_autonomous_mode
+
+class AutonomySelectRequest(BaseModel):
+    enabled: bool
+
+@router.get("/api/llm/autonomy")
+def get_autonomy():
+    return {"enabled": get_autonomous_mode()}
+
+@router.post("/api/llm/autonomy")
+def set_autonomy(req: AutonomySelectRequest):
+    updated = set_autonomous_mode(req.enabled)
+    return {"status": "ok", "enabled": updated}
+
+from fastapi import Form, HTTPException, Request
+import os
+from backend.scheduler import execute_background_task
+try:
+    from twilio.request_validator import RequestValidator
+except ImportError:
+    RequestValidator = None
+
+@router.post("/api/twilio/webhook")
+async def twilio_webhook(request: Request, Body: str = Form(...), From: str = Form(...)):
+    # 1. Caller ID Check
+    allowed_number = os.getenv("USER_PHONE_NUMBER", "").strip()
+    if not allowed_number or From != allowed_number:
+        print(f"\n[SECURITY ALERT] Rejected unauthorized SMS from {From}\n")
+        raise HTTPException(status_code=403, detail="Unauthorized sender")
+
+    # 2. Cryptographic Signature Check
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
+    if auth_token and auth_token != "your_twilio_auth_token_here":
+        if RequestValidator is None:
+            raise HTTPException(status_code=500, detail="Twilio package not installed")
+        validator = RequestValidator(auth_token)
+        signature = request.headers.get("X-Twilio-Signature", "")
+        url = str(request.url).replace("http://", "https://") if request.headers.get("x-forwarded-proto") == "https" else str(request.url)
+        form_data = await request.form()
+        post_vars = {k: v for k, v in form_data.items()}
+        
+        if not validator.validate(url, post_vars, signature):
+            print(f"\n[SECURITY ALERT] Invalid Twilio Signature detected!\n")
+            raise HTTPException(status_code=403, detail="Invalid Twilio Signature")
+
+    print(f"\n[TWILIO WEBHOOK] Received text from {From}: {Body}\n")
+    # Trigger background evaluation with user's text as the prompt
+    execute_background_task(f"User replied via SMS: {Body}")
+    return {"status": "ok"}

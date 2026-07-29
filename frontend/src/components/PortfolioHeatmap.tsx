@@ -14,7 +14,7 @@ export default function PortfolioHeatmap() {
         const data = await res.json();
         setPositions(data.positions || []);
       }
-    } catch (err) {}
+    } catch (err) { }
   }, []);
 
   useEffect(() => {
@@ -32,12 +32,16 @@ export default function PortfolioHeatmap() {
 
   let totalMarketVal = 0;
   const items = positions.map(p => {
-    const cp = prices[p.ticker]?.price || p.current_price || p.avg_cost;
-    const mktVal = cp * p.quantity;
-    const pnlPct = p.avg_cost ? ((cp - p.avg_cost) / p.avg_cost) * 100 : 0;
+    const liveData = prices[p.ticker];
+    const cp = (liveData && p.live_pricing !== false) ? liveData.price : (p.current_price || p.avg_cost);
+    const multiplier = p.asset_type === 'OPTION' ? 100 : 1;
+    const mktVal = cp * p.quantity * multiplier;
+    const pnlPct = p.avg_cost ? ((cp - p.avg_cost) / p.avg_cost) * 100 * Math.sign(p.quantity) : 0;
     totalMarketVal += mktVal;
     return {
       ticker: p.ticker,
+      description: p.description || p.ticker,
+      asset_type: p.asset_type,
       mktVal,
       pnlPct,
     };
@@ -51,18 +55,22 @@ export default function PortfolioHeatmap() {
           No positions held
         </div>
       ) : (
-        <div className="flex-1 flex flex-wrap gap-1 content-start">
+        <div className="flex-1 flex flex-wrap gap-1 content-start overflow-y-auto">
           {items.map(p => {
             const weight = totalMarketVal > 0 ? (p.mktVal / totalMarketVal) * 100 : 100 / items.length;
             const isPositive = p.pnlPct >= 0;
             const bgClass = isPositive ? 'bg-uptick/80 hover:bg-uptick' : 'bg-downtick/80 hover:bg-downtick';
+            const isOption = p.asset_type === 'OPTION' || p.description.length > 10;
             return (
-              <div 
-                key={p.ticker} 
-                className={`${bgClass} flex flex-col items-center justify-center p-2 rounded transition-all cursor-pointer min-w-[60px] flex-1`}
-                style={{ flexBasis: `${Math.max(20, weight)}%`, height: `${Math.max(60, Math.min(180, weight * 3))}px` }}>
-                <span className="font-bold text-sm">{p.ticker}</span>
-                <span className="text-xs font-mono">{p.pnlPct >= 0 ? '+' : ''}{p.pnlPct.toFixed(2)}%</span>
+              <div
+                key={p.ticker}
+                title={p.description}
+                className={`${bgClass} flex flex-col items-center justify-center p-1 rounded transition-all cursor-pointer min-w-[60px] flex-1`}
+                style={{ flexBasis: `${Math.max(15, weight)}%`, height: `${Math.max(50, Math.min(180, weight * 3))}px` }}>
+                <span className={`font-bold text-center leading-tight break-words max-w-full px-1 ${isOption ? 'text-[9px]' : 'text-sm'}`}>
+                  {p.description}
+                </span>
+                <span className="text-[10px] font-mono mt-0.5">{p.pnlPct >= 0 ? '+' : ''}{p.pnlPct.toFixed(2)}%</span>
               </div>
             );
           })}

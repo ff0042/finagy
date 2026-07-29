@@ -1,16 +1,34 @@
-
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+import os
 import json
 import asyncio
 from backend.db.database import execute_query, get_active_account, set_active_account, list_accounts
-from backend.market_data import price_cache
+from backend.market_data import price_cache, get_market_data_provider
 from backend.schwab_service import schwab_service
 from backend.constants import DEFAULT_USER_ID, DEFAULT_ACCOUNT_ID
 from backend.trade_service import execute_actions
 
 router = APIRouter()
+
+def parse_occ_symbol(symbol: str) -> str:
+    if len(symbol) < 21:
+        return symbol
+    root = symbol[:6].strip()
+    yymmdd = symbol[6:12]
+    cp = symbol[12:13]
+    strike_str = symbol[13:]
+    try:
+        month_str = yymmdd[2:4]
+        day_str = yymmdd[4:6]
+        year_str = yymmdd[0:2]
+        date_str = f"{month_str}/{day_str}/{year_str}"
+        strike = float(strike_str) / 1000.0
+        strike_fmt = f"{strike:g}"
+        return f"{root} {date_str} {strike_fmt} {cp}"
+    except Exception:
+        return symbol
 
 @router.get("/api/accounts")
 def get_accounts():
@@ -46,7 +64,8 @@ async def stream_prices(request: Request):
                 break
             prices = price_cache.get_all()
             yield f"data: {json.dumps(prices)}\n\n"
-            await asyncio.sleep(0.5)
+            tick_freq = float(os.getenv("TICK_FREQUENCY_SECONDS", "5.0"))
+            await asyncio.sleep(tick_freq)
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @router.get("/api/portfolio")
@@ -79,8 +98,109 @@ def get_portfolio():
                 execute_query("UPDATE accounts SET cash_balance = ? WHERE id = ?", (cash, acct_id))
                 if active:
                     active["cash_balance"] = cash
-        except Exception:
-            pass
+                schwab_positions = sec_acct.get("positions", [])
+                pos_list = []
+                total_pos_value = 0.0
+                total_cost = 0.0
+                
+                for p in schwab_positions:
+                    instrument = p.get("instrument", {})
+                    ticker = instrument.get("symbol", "")
+                    if not ticker or instrument.get("assetType") == "CASH_EQUIVALENT" or ticker == "MMDA1":
+                        continue
+                        
+                    try:
+                        get_market_data_provider().add_ticker(ticker)
+                    except Exception:
+                        pass
+                        
+                    asset_type = instrument.get("assetType", "EQUITY")
+                    if asset_type == "COLLECTIVE_INVESTMENT":
+                        asset_type = "ETF"
+                    description = ticker
+                    if asset_type == "OPTION":
+                        description = parse_occ_symbol(ticker)
+                    elif asset_type == "MUTUAL_FUND":
+                        description = instrument.get("description", ticker)
+                        
+                    long_qty = p.get("longQuantity", 0)
+                    short_qty = p.get("shortQuantity", 0)
+                    qty = long_qty - short_qty
+                    
+                    if qty == 0:
+                        continue
+                        
+                    if qty > 0:
+                        avg = p.get("taxLotAverageLongPrice", p.get("averagePrice", 0.0))
+                    else:
+                        avg = p.get("averageShortPrice", p.get("averagePrice", 0.0))
+                        
+                    raw_market_val = p.get("marketValue", 0.0)
+                    
+                    use_live = True
+                    try:
+                        import datetime
+                        try:
+                            from zoneinfo import ZoneInfo
+                            tz = ZoneInfo("America/New_York")
+                        except ImportError:
+                            import pytz
+                            tz = pytz.timezone("America/New_York")
+                            
+                        now = datetime.datetime.now(tz)
+                        if now.weekday() >= 5:
+                            use_live = False
+                        else:
+                            market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
+                            market_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
+                            if not (market_open <= now <= market_close):
+                                use_live = False
+                    except Exception:
+                        use_live = True
+
+                    cp = price_cache.get(ticker)
+                    if cp and use_live:
+                        current_price = cp["price"]
+                    else:
+                        frozen_market_val = raw_market_val - p.get("currentDayProfitLoss", 0.0)
+                        if asset_type == "OPTION":
+                            current_price = frozen_market_val / (qty * 100) if qty != 0 else avg
+                        else:
+                            current_price = frozen_market_val / qty if qty != 0 else avg
+                    
+                    if asset_type == "OPTION":
+                        market_val = current_price * qty * 100
+                        cost = avg * qty * 100
+                    else:
+                        market_val = current_price * qty
+                        cost = avg * qty
+                        
+                    unrealized = market_val - cost
+                    
+                    total_pos_value += market_val
+                    total_cost += cost
+                    
+                    pos_list.append({
+                        "ticker": ticker,
+                        "description": description,
+                        "asset_type": asset_type,
+                        "quantity": qty,
+                        "avg_cost": avg,
+                        "current_price": current_price,
+                        "market_value": market_val,
+                        "unrealized_pnl": unrealized,
+                        "live_pricing": use_live
+                    })
+                    
+                return {
+                    "account": active,
+                    "cash_balance": cash,
+                    "positions": pos_list,
+                    "total_value": cash + total_pos_value,
+                    "total_pnl": total_pos_value - total_cost
+                }
+        except Exception as e:
+            print(f"[WARN] Error fetching Schwab portfolio: {e}")
 
         return {
             "account": active,
@@ -116,6 +236,8 @@ def get_portfolio():
         
         pos_list.append({
             "ticker": ticker,
+            "description": ticker,
+            "asset_type": "EQUITY",
             "quantity": qty,
             "avg_cost": avg,
             "current_price": current_price,

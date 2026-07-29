@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import AccountSelector from './AccountSelector';
 import SchwabAuthBadge from './SchwabAuthBadge';
 import ModelSelector from './ModelSelector';
+import AutonomyToggle from './AutonomyToggle';
 import { useAuthStatus } from '../contexts/AuthContext';
 import { useWorkstationRefresh } from '../hooks/useWorkstationRefresh';
 import { fetchApi } from '../lib/api';
@@ -39,8 +40,10 @@ export default function Header() {
     let livePosValue = 0;
     if (portfolio.positions) {
       portfolio.positions.forEach((p: Position) => {
-        const cp = prices[p.ticker]?.price || p.current_price || p.avg_cost;
-        livePosValue += cp * p.quantity;
+        const liveData = prices[p.ticker];
+        const cp = (liveData && p.live_pricing !== false) ? liveData.price : (p.current_price || p.avg_cost);
+        const multiplier = p.asset_type === 'OPTION' ? 100 : 1;
+        livePosValue += cp * p.quantity * multiplier;
       });
     }
     const liveCash = portfolio.cash_balance !== undefined ? portfolio.cash_balance : 0.0;
@@ -50,7 +53,7 @@ export default function Header() {
   }, [portfolio, prices]);
 
   return (
-    <header className="flex flex-wrap items-center justify-between p-4 bg-card rounded-lg mb-4 gap-4">
+    <header className="flex flex-wrap items-center justify-between p-4 bg-card rounded-lg gap-4">
       <div className="flex items-center gap-4">
         <h1 className="text-2xl font-bold text-white">Fin<span className="text-primary">Ally</span></h1>
       </div>
@@ -58,6 +61,7 @@ export default function Header() {
         <SchwabAuthBadge />
         <AccountSelector />
         <ModelSelector />
+        <AutonomyToggle />
         <div className="text-right pl-2 border-l border-gray-800">
           <p className="text-xs text-gray-400">Total Value</p>
           <p className="text-xl font-mono text-white font-bold">${liveTotalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>

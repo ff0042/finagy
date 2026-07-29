@@ -68,9 +68,7 @@ def fetch_real_market_price(ticker: str) -> float:
     except Exception:
         pass
 
-    # 3. Fallback deterministic fallback based on ticker hash if network is unavailable
-    seed = sum(ord(c) for c in ticker_clean) * 17 % 450 + 20
-    return round(float(seed), 2)
+    return None
 
 class BaseMarketData(abc.ABC):
     @abc.abstractmethod
@@ -87,18 +85,6 @@ class SchwabMarketData(BaseMarketData):
         self.running = False
         self.tickers: Set[str] = set()
         self._lock = threading.Lock()
-        self.client = None
-        self._init_client()
-
-    def _init_client(self):
-        try:
-            from backend.schwab_service import schwab_service
-            if schwab_service.get_token_status().get("authenticated"):
-                self.client = schwab_service.client
-            else:
-                self.client = None
-        except Exception:
-            self.client = None
 
     def start(self, tickers: List[str]):
         with self._lock:
@@ -115,47 +101,55 @@ class SchwabMarketData(BaseMarketData):
                 threading.Thread(target=self._fetch_single_quote, args=(ticker,), daemon=True).start()
 
     def _fetch_single_quote(self, ticker: str):
-        if self.client:
+        from backend.schwab_service import schwab_service
+        client = schwab_service.client
+        if client:
             try:
-                resp = self.client.quotes([ticker])
+                resp = client.quotes([ticker])
                 if resp and resp.status_code == 200:
                     data = resp.json()
                     quote = data.get(ticker, {}).get("quote", {})
-                    price = quote.get("lastPrice") or quote.get("mark")
+                    price = quote.get("mark") or quote.get("lastPrice") or quote.get("closePrice")
                     if price:
-                        price_cache.update(ticker, round(float(price), 2))
+                        price_cache.update(ticker, round(float(price), 4))
                         return
             except Exception:
                 pass
         price = fetch_real_market_price(ticker)
-        price_cache.update(ticker, price)
+        if price is not None:
+            price_cache.update(ticker, price)
 
     def _poll(self):
+        from backend.schwab_service import schwab_service
         while self.running:
             with self._lock:
                 active_list = list(self.tickers)
 
-            if active_list and self.client:
+            client = schwab_service.client
+            if active_list and client:
                 try:
-                    resp = self.client.quotes(active_list)
+                    resp = client.quotes(active_list)
                     if resp and resp.status_code == 200:
                         data = resp.json()
                         for ticker in active_list:
                             quote_info = data.get(ticker, {}).get("quote", {})
-                            price = quote_info.get("lastPrice") or quote_info.get("mark")
+                            price = quote_info.get("mark") or quote_info.get("lastPrice") or quote_info.get("closePrice")
                             if price:
-                                price_cache.update(ticker, round(float(price), 2))
+                                price_cache.update(ticker, round(float(price), 4))
                 except Exception:
                     for ticker in active_list:
                         cp = price_cache.get(ticker)
                         current = cp["price"] if cp else fetch_real_market_price(ticker)
-                        price_cache.update(ticker, round(current, 2))
+                        if current is not None:
+                            price_cache.update(ticker, round(current, 4))
             else:
                 for ticker in active_list:
                     price = fetch_real_market_price(ticker)
-                    price_cache.update(ticker, price)
+                    if price is not None:
+                        price_cache.update(ticker, price)
 
-            time.sleep(2.0)
+            tick_freq = float(os.getenv("TICK_FREQUENCY_SECONDS", "5.0"))
+            time.sleep(tick_freq)
 
 class GBMMarketSimulator(BaseMarketData):
     def __init__(self):
@@ -179,7 +173,8 @@ class GBMMarketSimulator(BaseMarketData):
 
     def _init_ticker_price(self, ticker: str):
         real_price = fetch_real_market_price(ticker)
-        price_cache.update(ticker, real_price)
+        if real_price is not None:
+            price_cache.update(ticker, real_price)
 
     def _simulate(self):
         with self._lock:
@@ -202,8 +197,11 @@ class GBMMarketSimulator(BaseMarketData):
                 cp = price_cache.get(ticker)
                 if not cp:
                     price = fetch_real_market_price(ticker)
-                    price_cache.update(ticker, price)
-                    current = price
+                    if price is not None:
+                        price_cache.update(ticker, price)
+                        current = price
+                    else:
+                        continue
                 else:
                     current = cp["price"]
                 
@@ -213,7 +211,8 @@ class GBMMarketSimulator(BaseMarketData):
                 new_price = max(0.01, current + dS)
                 price_cache.update(ticker, round(new_price, 2))
                 
-            time.sleep(0.5)
+            tick_freq = float(os.getenv("TICK_FREQUENCY_SECONDS", "5.0"))
+            time.sleep(tick_freq)
 
 class MassiveMarketData(BaseMarketData):
     def __init__(self, api_key: str):
@@ -242,9 +241,11 @@ class MassiveMarketData(BaseMarketData):
             for ticker in active_list:
                 cp = price_cache.get(ticker)
                 current = cp["price"] if cp else fetch_real_market_price(ticker)
-                new_price = current * (1 + random.uniform(-0.005, 0.005))
-                price_cache.update(ticker, round(new_price, 2))
-            time.sleep(5.0)
+                if current is not None:
+                    new_price = current * (1 + random.uniform(-0.005, 0.005))
+                    price_cache.update(ticker, round(new_price, 2))
+            tick_freq = float(os.getenv("TICK_FREQUENCY_SECONDS", "5.0"))
+            time.sleep(tick_freq)
 
 _provider_instance = None
 
