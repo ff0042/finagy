@@ -101,7 +101,7 @@ export default function WatchlistPanel({ onSelect }: { onSelect: (ticker: string
                   <tr key={ticker} className="border-b border-gray-800/50 cursor-pointer hover:bg-card2 transition-colors" onClick={() => onSelect(ticker)}>
                     <td className="py-2.5 font-bold">{ticker}</td>
                     <td className={`py-2.5 text-right font-mono ${flashClass}`}>
-                      {data ? `$${data.price.toFixed(2)}` : '---'}
+                      {data ? `$${Number(data.price.toFixed(4))}` : '---'}
                     </td>
                     <td className={`py-2.5 text-right font-mono ${data && data.change >= 0 ? 'text-uptick' : 'text-downtick'}`}>
                       {data ? `${data.change >= 0 ? '+' : ''}${data.changePercent.toFixed(2)}%` : '---'}

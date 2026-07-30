@@ -2,8 +2,9 @@
 import logging
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
+import os
 
 from backend.constants import DEFAULT_USER_ID, INITIAL_CASH_BALANCE
 from backend.db.database import (
@@ -20,6 +21,17 @@ router = APIRouter()
 @router.get("/api/schwab/auth-status")
 def auth_status():
     return schwab_service.get_token_status()
+
+@router.get("/api/schwab/token")
+def get_access_token():
+    env = os.getenv("ENVIRONMENT", "development").lower()
+    if env in ("production", "prod"):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+
+    status_info = schwab_service.get_token_status()
+    if status_info.get("authenticated") and schwab_service.client and schwab_service.client.tokens:
+        return {"access_token": schwab_service.client.tokens.access_token}
+    return {"access_token": None, "error": "Not authenticated"}
 
 @router.get("/api/schwab/auth-url")
 def schwab_login():
