@@ -170,8 +170,8 @@ def get_portfolio():
                         "description": description,
                         "asset_type": asset_type,
                         "quantity": qty,
-                        "avg_cost": round(avg, 4),
-                        "current_price": round(current_price, 4),
+                        "avg_cost": avg,
+                        "current_price": current_price,
                         "market_value": round(raw_market_val, 2),
                         "unrealized_pnl": round(raw_unrealized, 2),
                         "live_pricing": True
@@ -225,8 +225,8 @@ def get_portfolio():
             "description": ticker,
             "asset_type": "EQUITY",
             "quantity": qty,
-            "avg_cost": round(avg, 4),
-            "current_price": round(current_price, 4),
+            "avg_cost": avg,
+            "current_price": current_price,
             "market_value": round(raw_val, 2),
             "unrealized_pnl": round(raw_unrealized, 2)
         })

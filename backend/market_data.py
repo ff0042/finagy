@@ -272,22 +272,36 @@ _provider_instance = None
 
 def get_market_data_provider() -> BaseMarketData:
     global _provider_instance
-    if _provider_instance is None:
+    try:
         try:
-            try:
-                from backend.schwab_service import schwab_service
-            except ModuleNotFoundError:
-                from schwab_service import schwab_service
+            from backend.schwab_service import schwab_service
+        except ModuleNotFoundError:
+            from schwab_service import schwab_service
 
-            status = schwab_service.get_token_status()
-            if status.get("authenticated"):
+        if schwab_service.get_token_status().get("authenticated"):
+            if not isinstance(_provider_instance, SchwabMarketData):
+                if _provider_instance and hasattr(_provider_instance, "running"):
+                    _provider_instance.running = False
                 _provider_instance = SchwabMarketData()
                 logging.info("[INFO] Initialized Schwab Developer API Market Data Provider.")
-            elif os.getenv("MASSIVE_API_KEY"):
-                _provider_instance = MassiveMarketData(os.getenv("MASSIVE_API_KEY"))
-            else:
-                _provider_instance = GBMMarketSimulator()
-        except Exception as e:
-            logging.warning(f"Failed to initialize market provider: {e}")
+                try:
+                    try:
+                        from backend.db.database import execute_query
+                    except ModuleNotFoundError:
+                        from db.database import execute_query
+                    wl = execute_query("SELECT ticker FROM watchlist")
+                    initial_tickers = [r["ticker"] for r in wl] if wl else DEFAULT_TICKERS
+                except Exception:
+                    initial_tickers = DEFAULT_TICKERS
+                _provider_instance.start(initial_tickers)
+            return _provider_instance
+    except Exception as e:
+        logging.warning(f"Error checking market data provider status: {e}")
+
+    if _provider_instance is None:
+        if os.getenv("MASSIVE_API_KEY"):
+            _provider_instance = MassiveMarketData(os.getenv("MASSIVE_API_KEY"))
+        else:
             _provider_instance = GBMMarketSimulator()
+
     return _provider_instance
