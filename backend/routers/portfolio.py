@@ -138,74 +138,52 @@ def get_portfolio():
                     if qty == 0:
                         continue
                         
-                    if qty > 0:
-                        avg = p.get("taxLotAverageLongPrice", p.get("averagePrice", 0.0))
-                    else:
-                        avg = p.get("averageShortPrice", p.get("averagePrice", 0.0))
-                        
-                    raw_market_val = p.get("marketValue", 0.0)
-                    
-                    use_live = True
-                    try:
-                        import datetime
-                        try:
-                            from zoneinfo import ZoneInfo
-                            tz = ZoneInfo("America/New_York")
-                        except ImportError:
-                            import pytz
-                            tz = pytz.timezone("America/New_York")
-                            
-                        now = datetime.datetime.now(tz)
-                        if now.weekday() >= 5:
-                            use_live = False
+                    if asset_type == "OPTION":
+                        if qty > 0:
+                            avg = p.get("taxLotAverageLongPrice") if p.get("taxLotAverageLongPrice") is not None else p.get("averagePrice", 0.0)
                         else:
-                            market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
-                            market_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
-                            if not (market_open <= now <= market_close):
-                                use_live = False
-                    except Exception:
-                        use_live = True
+                            avg = p.get("taxLotAverageShortPrice") if p.get("taxLotAverageShortPrice") is not None else p.get("averagePrice", 0.0)
+                    else:
+                        if qty > 0:
+                            avg = p.get("taxLotAverageLongPrice", p.get("averagePrice", 0.0))
+                        else:
+                            avg = p.get("averageShortPrice", p.get("averagePrice", 0.0))
+                        
+                    multiplier = 100 if asset_type == "OPTION" else 1
 
                     cp = price_cache.get(ticker)
-                    if cp and use_live:
+                    if cp:
                         current_price = cp["price"]
                     else:
-                        frozen_market_val = raw_market_val - p.get("currentDayProfitLoss", 0.0)
-                        if asset_type == "OPTION":
-                            current_price = frozen_market_val / (qty * 100) if qty != 0 else avg
-                        else:
-                            current_price = frozen_market_val / qty if qty != 0 else avg
-                    
-                    if asset_type == "OPTION":
-                        market_val = current_price * qty * 100
-                        cost = avg * qty * 100
-                    else:
-                        market_val = current_price * qty
-                        cost = avg * qty
-                        
-                    unrealized = market_val - cost
-                    
-                    total_pos_value += market_val
-                    total_cost += cost
-                    
+                        market_val = p.get("marketValue", 0.0)
+                        current_price = market_val / (qty * multiplier) if qty != 0 else avg
+
+                    raw_cost = avg * qty * multiplier
+                    raw_market_val = current_price * qty * multiplier
+                    raw_unrealized = raw_market_val - raw_cost
+
+                    total_pos_value += raw_market_val
+                    total_cost += raw_cost
+
                     pos_list.append({
                         "ticker": ticker,
                         "description": description,
                         "asset_type": asset_type,
                         "quantity": qty,
-                        "avg_cost": avg,
-                        "current_price": current_price,
-                        "market_value": market_val,
-                        "unrealized_pnl": unrealized,
-                        "live_pricing": use_live
+                        "avg_cost": round(avg, 4),
+                        "current_price": round(current_price, 4),
+                        "market_value": round(raw_market_val, 2),
+                        "unrealized_pnl": round(raw_unrealized, 2),
+                        "live_pricing": True
                     })
-                    
+
                 return {
                     "account": active,
-                    "cash_balance": cash,
+                    "provider": get_market_data_provider().__class__.__name__,
+                    "cash_balance": round(cash, 2),
                     "positions": pos_list,
-                    "total_value": cash + total_pos_value,
-                    "total_pnl": total_pos_value - total_cost
+                    "total_value": round(cash + total_pos_value, 2),
+                    "total_pnl": round(total_pos_value - total_cost, 2)
                 }
         except Exception as e:
             logging.warning(f"Error fetching Schwab portfolio: {e}")
@@ -235,32 +213,32 @@ def get_portfolio():
         cp = price_cache.get(ticker)
         current_price = cp["price"] if cp else avg
         
-        val = current_price * qty
-        cost = avg * qty
-        unrealized = val - cost
+        raw_val = current_price * qty
+        raw_cost = avg * qty
+        raw_unrealized = raw_val - raw_cost
         
-        total_pos_value += val
-        total_cost += cost
+        total_pos_value += raw_val
+        total_cost += raw_cost
         
         pos_list.append({
             "ticker": ticker,
             "description": ticker,
             "asset_type": "EQUITY",
             "quantity": qty,
-            "avg_cost": avg,
-            "current_price": current_price,
-            "market_value": val,
-            "unrealized_pnl": unrealized
+            "avg_cost": round(avg, 4),
+            "current_price": round(current_price, 4),
+            "market_value": round(raw_val, 2),
+            "unrealized_pnl": round(raw_unrealized, 2)
         })
         
     total_value = cash + total_pos_value
     
     return {
         "account": active,
-        "cash_balance": cash,
+        "cash_balance": round(cash, 2),
         "positions": pos_list,
-        "total_value": total_value,
-        "total_pnl": total_pos_value - total_cost
+        "total_value": round(total_value, 2),
+        "total_pnl": round(total_pos_value - total_cost, 2)
     }
 
 class TradeRequest(BaseModel):

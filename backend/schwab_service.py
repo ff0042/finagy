@@ -12,11 +12,17 @@ from typing import Any
 
 import requests
 
-# Resolve persistent DB path (survives container restarts)
+backend_db = Path(__file__).parent / "db"
+root_db = Path(__file__).parent.parent / "db"
+
 if os.path.exists("/app/db"):
     DB_DIR = Path("/app/db")
+elif (root_db / "tokens.db").exists():
+    DB_DIR = root_db
+elif (backend_db / "tokens.db").exists():
+    DB_DIR = backend_db
 else:
-    DB_DIR = Path(__file__).parent.parent / "db"
+    DB_DIR = root_db
 
 TOKENS_DB_PATH = DB_DIR / "tokens.db"
 TOKENS_FILE_PATH = DB_DIR / "tokens.json"

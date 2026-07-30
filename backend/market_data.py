@@ -102,16 +102,26 @@ class SchwabMarketData(BaseMarketData):
                 threading.Thread(target=self._fetch_single_quote, args=(ticker,), daemon=True).start()
 
     def _fetch_single_quote(self, ticker: str):
-        from backend.schwab_service import schwab_service
+        try:
+            from backend.schwab_service import schwab_service
+        except ModuleNotFoundError:
+            from schwab_service import schwab_service
         client = schwab_service.client
         if client:
             try:
                 resp = client.quotes([ticker])
                 if resp and resp.status_code == 200:
                     data = resp.json()
-                    quote = data.get(ticker, {}).get("quote", {})
-                    price = quote.get("mark") or quote.get("lastPrice") or quote.get("closePrice")
-                    if price:
+                    ticker_data = data.get(ticker, {})
+                    asset_type = ticker_data.get("assetMainType", "EQUITY")
+                    quote = ticker_data.get("quote", {})
+                    
+                    if asset_type == "OPTION":
+                        price = quote.get("mark") if quote.get("mark") is not None else (quote.get("lastPrice") if quote.get("lastPrice") is not None else quote.get("closePrice"))
+                    else:
+                        price = quote.get("lastPrice") if quote.get("lastPrice") is not None else (quote.get("mark") if quote.get("mark") is not None else quote.get("closePrice"))
+                        
+                    if price is not None:
                         price_cache.update(ticker, round(float(price), 4))
                         return
             except Exception:
@@ -121,7 +131,10 @@ class SchwabMarketData(BaseMarketData):
             price_cache.update(ticker, price)
 
     def _poll(self):
-        from backend.schwab_service import schwab_service
+        try:
+            from backend.schwab_service import schwab_service
+        except ModuleNotFoundError:
+            from schwab_service import schwab_service
         while self.running:
             with self._lock:
                 active_list = list(self.tickers)
@@ -133,9 +146,16 @@ class SchwabMarketData(BaseMarketData):
                     if resp and resp.status_code == 200:
                         data = resp.json()
                         for ticker in active_list:
-                            quote_info = data.get(ticker, {}).get("quote", {})
-                            price = quote_info.get("mark") or quote_info.get("lastPrice") or quote_info.get("closePrice")
-                            if price:
+                            ticker_data = data.get(ticker, {})
+                            asset_type = ticker_data.get("assetMainType", "EQUITY")
+                            quote_info = ticker_data.get("quote", {})
+                            
+                            if asset_type == "OPTION":
+                                price = quote_info.get("mark") if quote_info.get("mark") is not None else (quote_info.get("lastPrice") if quote_info.get("lastPrice") is not None else quote_info.get("closePrice"))
+                            else:
+                                price = quote_info.get("lastPrice") if quote_info.get("lastPrice") is not None else (quote_info.get("mark") if quote_info.get("mark") is not None else quote_info.get("closePrice"))
+                                
+                            if price is not None:
                                 price_cache.update(ticker, round(float(price), 4))
                 except Exception:
                     for ticker in active_list:
@@ -254,14 +274,20 @@ def get_market_data_provider() -> BaseMarketData:
     global _provider_instance
     if _provider_instance is None:
         try:
-            from backend.schwab_service import schwab_service
-            if schwab_service.get_token_status().get("authenticated"):
+            try:
+                from backend.schwab_service import schwab_service
+            except ModuleNotFoundError:
+                from schwab_service import schwab_service
+
+            status = schwab_service.get_token_status()
+            if status.get("authenticated"):
                 _provider_instance = SchwabMarketData()
                 logging.info("[INFO] Initialized Schwab Developer API Market Data Provider.")
             elif os.getenv("MASSIVE_API_KEY"):
                 _provider_instance = MassiveMarketData(os.getenv("MASSIVE_API_KEY"))
             else:
                 _provider_instance = GBMMarketSimulator()
-        except Exception:
+        except Exception as e:
+            logging.warning(f"Failed to initialize market provider: {e}")
             _provider_instance = GBMMarketSimulator()
     return _provider_instance

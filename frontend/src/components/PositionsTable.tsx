@@ -81,8 +81,8 @@ export default function PositionsTable() {
             <tr key={p.ticker} className="hover:bg-card2 group border-0">
               <td className="py-0.5 truncate pr-2 font-normal text-xs" title={p.description || p.ticker}>{p.description || p.ticker}</td>
               <td className="py-0.5 text-right font-mono font-normal text-xs">{p.quantity}</td>
-              <td className="py-0.5 text-right font-mono font-normal text-xs">${p.avg_cost.toFixed(2)}</td>
-              <td className="py-0.5 text-right font-mono font-normal text-xs">${currentPrice.toFixed(2)}</td>
+              <td className="py-0.5 text-right font-mono font-normal text-xs">${Number(p.avg_cost.toFixed(4))}</td>
+              <td className="py-0.5 text-right font-mono font-normal text-xs">${Number(currentPrice.toFixed(4))}</td>
               <td className={`py-0.5 text-right font-mono font-normal text-xs ${isPositive ? 'text-uptick' : 'text-downtick'}`}>
                 {isPositive ? '+' : '-'}${Math.abs(pnl).toFixed(2)} ({pnlPercent.toFixed(2)}%)
               </td>
