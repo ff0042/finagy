@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 import os
 
-from backend.constants import DEFAULT_USER_ID, INITIAL_CASH_BALANCE
+from backend.constants import DEFAULT_ACCOUNT_ID, DEFAULT_USER_ID, INITIAL_CASH_BALANCE
 from backend.db.database import (
     execute_query,
     reset_session_state,

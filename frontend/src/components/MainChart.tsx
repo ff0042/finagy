@@ -22,16 +22,18 @@ export default function MainChart({ ticker }: { ticker: string }) {
           ))}
         </div>
       </div>
-      <div className="flex-1 min-h-[300px]">
+      <div className="flex-1 relative min-w-0 min-h-0">
         {chartData.length > 0 ? (
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData}>
-              <XAxis dataKey="time" hide />
-              <YAxis domain={['auto', 'auto']} tick={{fill: '#888'}} />
-              <Tooltip contentStyle={{backgroundColor: '#161b22', border: 'none'}} />
-              <Line type="monotone" dataKey="price" stroke="#209dd7" strokeWidth={2} dot={false} isAnimationActive={false} />
-            </LineChart>
-          </ResponsiveContainer>
+          <div className="absolute inset-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={chartData}>
+                <XAxis dataKey="time" hide />
+                <YAxis domain={['auto', 'auto']} tick={{fill: '#888'}} />
+                <Tooltip contentStyle={{backgroundColor: '#161b22', border: 'none'}} />
+                <Line type="monotone" dataKey="price" stroke="#209dd7" strokeWidth={2} dot={false} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
         ) : (
           <div className="flex items-center justify-center h-full text-gray-500">Waiting for data...</div>
         )}

@@ -328,11 +328,18 @@ def process_chat(user_message: str, portfolio_context: dict, chat_history: list,
     if is_mock:
         response_data = generate_mock_response(user_message)
     else:
-        mode_instruction = ""
-        if get_autonomous_mode():
-            mode_instruction = "YOU ARE IN AUTONOMOUS MODE. Any JSON order you generate (e.g., \"submit\" action) is automatically intercepted by our backend and executed IMMEDIATELY in the real world via the Schwab API. Do not EVER say you cannot execute trades. Do not EVER tell the user they have to execute the trade manually. You are the execution engine. You can and you must execute trades when the user asks or confirms."
+        active_acct = get_active_account()
+        is_schwab = active_acct and active_acct.get("type") == "SCHWAB"
+
+        if not is_schwab:
+            # Free tier: Always autonomous, no confirmation for trades or watchlists
+            mode_instruction = "YOU ARE IN AUTONOMOUS MODE. Any trade orders or watchlist changes the user requests MUST be executed immediately. Populate the 'orders' or 'watchlist_changes' array in your JSON response. Do NOT ask for confirmation. Do NOT say you cannot execute trades."
         else:
-            mode_instruction = "YOU ARE IN CONFIRMATION MODE. You must formulate and present tailored recommendations to the user, but you must WAIT for their explicit confirmation before outputting any JSON orders. Do NOT generate \"submit\" actions until the user explicitly says 'execute', 'proceed', or 'confirm'."
+            # Schwab connected
+            if get_autonomous_mode():
+                mode_instruction = "YOU ARE IN AUTONOMOUS MODE. Any JSON order you generate (e.g., \"submit\" action) is automatically intercepted by our backend and executed IMMEDIATELY in the real world via the Schwab API. Do not EVER say you cannot execute trades. Do not EVER tell the user they have to execute the trade manually. You are the execution engine. You can and you must execute trades when the user asks or confirms."
+            else:
+                mode_instruction = "YOU ARE IN CONFIRMATION MODE. You must formulate and present tailored trade recommendations to the user, but you must WAIT for their explicit confirmation before outputting any JSON orders. Do NOT generate \"submit\" trade actions until the user explicitly says 'execute', 'proceed', or 'confirm'. Note: Watchlist changes (adding or removing tickers from the watchlist) are NOT trades; they MUST ALWAYS be executed immediately without asking for confirmation."
             
         if is_background:
             context_instruction = "BACKGROUND CRON JOB: The user is NOT at their workstation. You MUST use the `send_sms` tool to text them your recommendations or alerts."
