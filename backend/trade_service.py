@@ -4,7 +4,11 @@ from datetime import UTC, datetime
 
 from backend.constants import DEFAULT_ACCOUNT_ID, DEFAULT_USER_ID
 from backend.db.database import execute_query, get_active_account, get_connection
-from backend.market_data import fetch_real_market_price, get_market_data_provider, price_cache
+from backend.market_data import (
+    fetch_real_market_price,
+    get_market_data_provider,
+    price_cache,
+)
 from backend.schwab_service import schwab_service
 
 logger = logging.getLogger(__name__)
@@ -14,6 +18,8 @@ def execute_actions(response_data, account_id=None):
     
     market_provider = get_market_data_provider()
     
+    schwab_connected = schwab_service.get_token_status().get("authenticated", False)
+
     if not account_id:
         active_acct = get_active_account()
         acct_id = active_acct["id"] if active_acct else DEFAULT_ACCOUNT_ID
@@ -21,50 +27,56 @@ def execute_actions(response_data, account_id=None):
         acct_hash = active_acct.get("account_hash") if active_acct else None
     else:
         acct_id = account_id
-        rows = execute_query("SELECT type, account_hash FROM accounts WHERE id = ?", (acct_id,))
-        acct_type = rows[0]["type"] if rows else "LOCAL"
-        acct_hash = rows[0]["account_hash"] if rows else None
+        if schwab_connected and acct_id.startswith("schwab_"):
+            acct_type = "SCHWAB"
+            accounts = schwab_service.get_linked_accounts()
+            acct_hash = next((a["account_hash"] for a in accounts if a["id"] == acct_id), None)
+        else:
+            rows = execute_query("SELECT type, account_hash FROM accounts WHERE id = ?", (acct_id,))
+            acct_type = rows[0]["type"] if rows else "LOCAL"
+            acct_hash = rows[0]["account_hash"] if rows else None
 
     executed_watchlist = []
     failed_watchlist = []
     executed_orders = []
     failed_orders = []
 
-    # Process Watchlist (Always local)
-    for w in watchlist_changes:
-        ticker = w.get("ticker", "").upper()
-        action = w.get("action", "").lower()
-        if not ticker:
-            continue
-        if action == "add":
-            existing = execute_query(
-                "SELECT id FROM watchlist WHERE user_id = ? AND account_id = ? AND UPPER(ticker) = ?",
-                (DEFAULT_USER_ID, acct_id, ticker)
-            )
-            if existing:
-                executed_watchlist.append(ticker)
-            else:
-                try:
-                    execute_query(
-                        "INSERT INTO watchlist (id, user_id, account_id, ticker, added_at) VALUES (?, ?, ?, ?, ?)",
-                        (str(uuid.uuid4()), DEFAULT_USER_ID, acct_id, ticker, datetime.now(UTC).isoformat())
-                    )
-                    executed_watchlist.append(ticker)
-                except Exception as e:
-                    logger.warning(f"Failed to add {ticker} to watchlist: {e}")
-                    failed_watchlist.append(ticker)
-            market_provider.add_ticker(ticker)
-        elif action == "remove":
-            try:
-                execute_query(
-                    "DELETE FROM watchlist WHERE user_id = ? AND account_id = ? AND UPPER(ticker) = ?",
+    # Process Watchlist (Always local - skip in Schwab mode)
+    if not (schwab_connected and acct_type == "SCHWAB"):
+        for w in watchlist_changes:
+            ticker = w.get("ticker", "").upper()
+            action = w.get("action", "").lower()
+            if not ticker:
+                continue
+            if action == "add":
+                existing = execute_query(
+                    "SELECT id FROM watchlist WHERE user_id = ? AND account_id = ? AND UPPER(ticker) = ?",
                     (DEFAULT_USER_ID, acct_id, ticker)
                 )
-                executed_watchlist.append(ticker)
-            except Exception as e:
-                failed_watchlist.append(ticker)
+                if existing:
+                    executed_watchlist.append(ticker)
+                else:
+                    try:
+                        execute_query(
+                            "INSERT INTO watchlist (id, user_id, account_id, ticker, added_at) VALUES (?, ?, ?, ?, ?)",
+                            (str(uuid.uuid4()), DEFAULT_USER_ID, acct_id, ticker, datetime.now(UTC).isoformat())
+                        )
+                        executed_watchlist.append(ticker)
+                    except Exception as e:
+                        logger.warning(f"Failed to add {ticker} to watchlist: {e}")
+                        failed_watchlist.append(ticker)
+                market_provider.add_ticker(ticker)
+            elif action == "remove":
+                try:
+                    execute_query(
+                        "DELETE FROM watchlist WHERE user_id = ? AND account_id = ? AND UPPER(ticker) = ?",
+                        (DEFAULT_USER_ID, acct_id, ticker)
+                    )
+                    executed_watchlist.append(ticker)
+                except Exception:
+                    failed_watchlist.append(ticker)
             
-    is_schwab = (acct_type == "SCHWAB") and schwab_service.get_token_status().get("authenticated", False) and acct_hash
+    is_schwab = (acct_type == "SCHWAB") and schwab_connected and acct_hash
 
     # Process Orders/Trades
     orders = response_data.get("orders", [])
@@ -86,10 +98,6 @@ def execute_actions(response_data, account_id=None):
                 res = schwab_service.cancel_order(acct_hash, order_id)
                 if not res.get("success"):
                     logger.error(f"Schwab cancel order failed: {res}")
-                else:
-                    # Mark canceled in DB
-                    execute_query("UPDATE orders SET status = 'CANCELED', updated_at = ? WHERE broker_order_id = ?", 
-                                  (datetime.now(UTC).isoformat(), order_id))
             else:
                 # Cancel local order
                 execute_query("UPDATE orders SET status = 'CANCELED', updated_at = ? WHERE id = ?", 
@@ -116,13 +124,7 @@ def execute_actions(response_data, account_id=None):
             if not res.get("success"):
                 logger.error(f"Schwab order failed: {res}")
             else:
-                broker_order_id = res.get("order_id", "UNKNOWN")
-                status = "WORKING" if order_type != "market" else "FILLED"
-                # Insert into local orders table
-                execute_query(
-                    "INSERT INTO orders (id, user_id, account_id, ticker, side, quantity, order_type, limit_price, stop_price, time_in_force, status, broker_order_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (str(uuid.uuid4()), DEFAULT_USER_ID, acct_id, ticker, side, quantity, order_type.upper(), limit_price, stop_price, tif.upper(), status, broker_order_id, datetime.now(UTC).isoformat())
-                )
+                executed_orders.append(f"{side}:{quantity}:{ticker}")
         else:
             # Local execution with transaction (Simulated Paper Trading - Always Immediate Execution)
             with get_connection() as conn:

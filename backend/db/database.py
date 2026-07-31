@@ -179,6 +179,18 @@ def execute_query(query, params=()):
         return [dict(r) for r in rows]
 
 def get_active_account():
+    try:
+        from backend.schwab_service import schwab_service
+        if schwab_service.get_token_status().get("authenticated", False):
+            accounts = schwab_service.get_linked_accounts()
+            for a in accounts:
+                if a.get("is_active") == 1:
+                    return a
+            if accounts:
+                return accounts[0]
+    except Exception as e:
+        logger.warning(f"Error checking active Schwab account: {e}")
+
     rows = execute_query("SELECT * FROM accounts WHERE is_active = 1 LIMIT 1")
     if rows:
         return dict(rows[0])

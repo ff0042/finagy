@@ -1,18 +1,20 @@
 
-from datetime import UTC, datetime
-import uuid
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from backend.constants import DEFAULT_ACCOUNT_ID, DEFAULT_TICKERS, DEFAULT_USER_ID
+from backend.constants import DEFAULT_ACCOUNT_ID, DEFAULT_USER_ID
 from backend.db.database import execute_query, get_active_account
-from backend.market_data import get_market_data_provider, price_cache
+from backend.market_data import price_cache
+from backend.schwab_service import schwab_service
 from backend.trade_service import execute_actions
 
 router = APIRouter()
 
 @router.get("/api/watchlist")
 def get_watchlist():
+    if schwab_service.get_token_status().get("authenticated", False):
+        return []
+
     active = get_active_account()
     acct_id = active["id"] if active else DEFAULT_ACCOUNT_ID
     
@@ -33,6 +35,9 @@ class WatchlistRequest(BaseModel):
 
 @router.post("/api/watchlist")
 def add_watchlist(req: WatchlistRequest):
+    if schwab_service.get_token_status().get("authenticated", False):
+        return {"status": "ok"}
+
     active = get_active_account()
     acct_id = active["id"] if active else DEFAULT_ACCOUNT_ID
     execute_actions({
@@ -42,6 +47,9 @@ def add_watchlist(req: WatchlistRequest):
 
 @router.delete("/api/watchlist/{ticker}")
 def remove_watchlist(ticker: str):
+    if schwab_service.get_token_status().get("authenticated", False):
+        return {"status": "ok"}
+
     active = get_active_account()
     acct_id = active["id"] if active else DEFAULT_ACCOUNT_ID
     execute_actions({

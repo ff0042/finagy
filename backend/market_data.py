@@ -2,7 +2,6 @@ import abc
 import concurrent.futures
 import json
 import logging
-import math
 import os
 import random
 import threading
@@ -10,6 +9,8 @@ import time
 import urllib.request
 from datetime import UTC, datetime
 from typing import Any
+
+from backend.constants import DEFAULT_ACCOUNT_ID, DEFAULT_TICKERS
 
 
 class PriceCache:
@@ -350,11 +351,11 @@ def get_market_data_provider() -> BaseMarketData:
     global _provider_instance
     try:
         try:
-            from backend.schwab_service import schwab_service
             from backend.db.database import execute_query, get_active_account
+            from backend.schwab_service import schwab_service
         except ModuleNotFoundError:
-            from schwab_service import schwab_service
             from db.database import execute_query, get_active_account
+            from schwab_service import schwab_service
 
         active = get_active_account()
         acct_id = active["id"] if active else DEFAULT_ACCOUNT_ID
@@ -367,12 +368,7 @@ def get_market_data_provider() -> BaseMarketData:
                     _provider_instance.running = False
                 _provider_instance = SchwabMarketData()
                 logging.info("[INFO] Initialized Schwab Developer API Market Data Provider.")
-                try:
-                    wl = execute_query("SELECT ticker FROM watchlist WHERE user_id = 'default' AND account_id = ?", (acct_id,))
-                    initial_tickers = [r["ticker"] for r in wl] if wl else DEFAULT_TICKERS
-                except Exception:
-                    initial_tickers = DEFAULT_TICKERS
-                _provider_instance.start(initial_tickers)
+                _provider_instance.start([])
             return _provider_instance
 
         if not isinstance(_provider_instance, (YahooFinanceMarketData, MassiveMarketData)):

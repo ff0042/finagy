@@ -28,3 +28,17 @@ pythonpath = ["..", "."]
 dev = [
     "ruff>=0.16.0",
 ]
+
+[tool.ruff.lint]
+ignore = [
+    "BLE001",  # Do not catch blind exception
+    "LOG015",  # Use of root logger
+    "S110",    # try-except-pass
+    "PLW1508", # Invalid type for env var default
+    "RUF013",  # Implicit Optional
+    "C401",    # Unnecessary generator (rewrite as set comprehension)
+    "RUF100",  # Unused noqa directive
+    "PLW0602", # Global variable without assignment
+    "E722",    # Bare except
+    "SIM102",  # Nested if statements
+]

@@ -28,16 +28,15 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 try:
-    from backend.constants import DEFAULT_ACCOUNT_ID, DEFAULT_USER_ID
+    from backend.constants import DEFAULT_ACCOUNT_ID, DEFAULT_TICKERS, DEFAULT_USER_ID
     from backend.db.database import execute_query, get_active_account, init_db
-    from backend.market_data import get_market_data_provider, price_cache
+    from backend.market_data import get_market_data_provider
     from backend.routers import auth, llm, portfolio, watchlist
     from backend.scheduler import start_scheduler
-    from backend.schwab_service import schwab_service
 except ModuleNotFoundError:
-    from constants import DEFAULT_ACCOUNT_ID, DEFAULT_USER_ID
+    from constants import DEFAULT_ACCOUNT_ID, DEFAULT_TICKERS, DEFAULT_USER_ID
     from db.database import execute_query, get_active_account, init_db
-    from market_data import get_market_data_provider, price_cache
+    from market_data import get_market_data_provider
     from routers import auth, llm, portfolio, watchlist
     from scheduler import start_scheduler
 
@@ -55,10 +54,21 @@ async def snapshot_task():
             portfolio_data = await loop.run_in_executor(None, get_portfolio)
             total_value = portfolio_data.get("total_value", 10000.0)
             
-            execute_query(
-                "INSERT INTO portfolio_snapshots (id, user_id, account_id, total_value, recorded_at) VALUES (?, ?, ?, ?, ?)",
-                (str(uuid.uuid4()), DEFAULT_USER_ID, acct_id, total_value, datetime.now(UTC).isoformat())
-            )
+            from backend.schwab_service import schwab_service
+            schwab_connected = schwab_service.get_token_status().get("authenticated", False)
+            if schwab_connected and active and active.get("type") == "SCHWAB":
+                from backend.routers.portfolio import schwab_snapshots
+                if acct_id not in schwab_snapshots:
+                    schwab_snapshots[acct_id] = []
+                schwab_snapshots[acct_id].append({
+                    "total_value": total_value,
+                    "recorded_at": datetime.now(UTC).isoformat()
+                })
+            else:
+                execute_query(
+                    "INSERT INTO portfolio_snapshots (id, user_id, account_id, total_value, recorded_at) VALUES (?, ?, ?, ?, ?)",
+                    (str(uuid.uuid4()), DEFAULT_USER_ID, acct_id, total_value, datetime.now(UTC).isoformat())
+                )
         except Exception as e:
             logger.error(f"Snapshot task error: {e}")
         await asyncio.sleep(30)
@@ -83,8 +93,12 @@ async def lifespan(app: FastAPI):
     
     logger.info("Starting market data provider...")
     market_provider = get_market_data_provider()
-    wl = execute_query("SELECT ticker FROM watchlist")
-    initial_tickers = [r["ticker"] for r in wl] if wl else DEFAULT_TICKERS
+    from backend.schwab_service import schwab_service
+    if schwab_service.get_token_status().get("authenticated", False):
+        initial_tickers = []
+    else:
+        wl = execute_query("SELECT ticker FROM watchlist")
+        initial_tickers = [r["ticker"] for r in wl] if wl else DEFAULT_TICKERS
     market_provider.start(initial_tickers)
         
     global task_ref
