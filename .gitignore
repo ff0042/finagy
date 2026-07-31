@@ -32,6 +32,10 @@ build/
 htmlcov/
 .nox/
 .tox/
+test-results/
+**/test-results/
+playwright-report/
+**/playwright-report/
 
 # Compiled Static Output
 backend/static/

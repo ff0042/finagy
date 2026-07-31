@@ -50,3 +50,4 @@ This document establishes the mandatory development standards and quality direct
 - **`/schedule`**: Schedules background cron jobs or one-shot timers for background notifications and evaluations.
 - **`/grill-me`**: Initiates an interactive interview session to align on design decisions and resolve architecture trade-offs.
 - **`/learn`**: Teaches the agent new repository patterns or corrects past behaviors, persisting them for future sessions.
+- **`/sandbox [branch-name]`**: Emulates Claude Code sandbox mode with isolated branch execution, autonomous reads/network access, and paid API cost guardrails.
