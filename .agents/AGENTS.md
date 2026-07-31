@@ -51,3 +51,9 @@ This document establishes the mandatory development standards and quality direct
 - **`/grill-me`**: Initiates an interactive interview session to align on design decisions and resolve architecture trade-offs.
 - **`/learn`**: Teaches the agent new repository patterns or corrects past behaviors, persisting them for future sessions.
 - **`/sandbox [branch-name]`**: Emulates Claude Code sandbox mode with isolated branch execution, autonomous reads/network access, and paid API cost guardrails.
+
+---
+
+## 7. Usage Allocation & Efficiency Guidelines
+- **Externalize Builds & Tests:** To conserve the user's weekly usage quota, agents should prioritize asking the user to run intensive commands (like `npm run build`, `npm run lint`, or `uv run pytest`) manually in their local workstation terminal and report the final outcome/logs back, rather than running them directly inside the agent's execution context.
+
