@@ -44,12 +44,12 @@ export default function PositionsTable() {
     };
   }, [fetchPositions]);
 
-  const handleSell = async (ticker: string, quantity: number) => {
+  const handleSell = async (ticker: string, quantity: number, side: string = 'sell') => {
     try {
       await fetch('/api/portfolio/trade', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ticker, quantity, side: 'sell' })
+        body: JSON.stringify({ ticker, quantity: Math.abs(quantity), side })
       });
       fetchPositions();
       if (typeof window !== 'undefined') {
@@ -88,9 +88,9 @@ export default function PositionsTable() {
               </td>
               <td className="py-0.5 text-right">
                 <button
-                  onClick={() => handleSell(p.ticker, p.quantity)}
+                  onClick={() => handleSell(p.ticker, Math.abs(p.quantity), p.quantity > 0 ? 'sell' : 'buy')}
                   className="px-2 py-0.5 bg-downtick text-white rounded text-[10px] opacity-0 group-hover:opacity-100 transition-opacity">
-                  Sell
+                  {p.quantity > 0 ? 'Sell' : 'Close'}
                 </button>
               </td>
             </tr>

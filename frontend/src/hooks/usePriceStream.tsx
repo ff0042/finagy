@@ -7,6 +7,7 @@ export type PriceData = {
   change: number;
   changePercent: number;
   flash: 'green' | 'red' | null;
+  tickDirection?: 'up' | 'down' | 'flat';
   history: number[];
 };
 
@@ -50,16 +51,27 @@ export function PriceStreamProvider({ children }: { children: React.ReactNode })
               const oldPrice = old?.price || currentPrice;
               
               let flash: 'green' | 'red' | null = null;
-              if (currentPrice > oldPrice) flash = 'green';
-              else if (currentPrice < oldPrice) flash = 'red';
+              let tickDirection: 'up' | 'down' | 'flat' = old?.tickDirection || 'flat';
+
+              if (old && currentPrice > old.price) {
+                flash = 'green';
+                tickDirection = 'up';
+              } else if (old && currentPrice < old.price) {
+                flash = 'red';
+                tickDirection = 'down';
+              }
 
               const history = old?.history ? [...old.history, currentPrice].slice(-20) : [currentPrice];
 
+              const change = itemObj.change !== undefined ? itemObj.change : (currentPrice - oldPrice);
+              const changePercent = itemObj.change_percent !== undefined ? itemObj.change_percent : (itemObj.changePercent !== undefined ? itemObj.changePercent : (oldPrice ? ((currentPrice - oldPrice) / oldPrice) * 100 : 0));
+
               next[ticker] = {
                 price: currentPrice,
-                change: currentPrice - oldPrice,
-                changePercent: oldPrice ? ((currentPrice - oldPrice) / oldPrice) * 100 : 0,
+                change,
+                changePercent,
                 flash,
+                tickDirection,
                 history,
               };
             }

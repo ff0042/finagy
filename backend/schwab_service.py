@@ -90,6 +90,14 @@ class SchwabService:
         self._init_client()
 
     def _init_client(self):
+        if self.client is not None:
+            try:
+                if hasattr(self.client, "_tokens") and hasattr(self.client._tokens, "_conn"):
+                    self.client._tokens._conn.close()
+            except Exception:
+                pass
+            self.client = None
+
         app_key = os.getenv("SCHWAB_CLIENT_ID") or os.getenv("SCHWAB_APP_KEY")
         app_secret = os.getenv("SCHWAB_CLIENT_SECRET") or os.getenv("SCHWAB_APP_SECRET")
         callback_url = os.getenv("SCHWAB_REDIRECT_URI", "https://127.0.0.1:8080")
@@ -102,7 +110,8 @@ class SchwabService:
         has_valid_db_token = False
         if TOKENS_DB_PATH.exists():
             try:
-                conn = sqlite3.connect(str(TOKENS_DB_PATH))
+                conn = sqlite3.connect(str(TOKENS_DB_PATH), timeout=30.0)
+                conn.execute("PRAGMA journal_mode=WAL;")
                 cur = conn.cursor()
                 cur.execute("SELECT access_token, refresh_token, refresh_token_issued FROM schwabdev LIMIT 1")
                 row = cur.fetchone()
@@ -214,7 +223,8 @@ class SchwabService:
         """Direct SQLite writer matching schwabdev table schema exactly."""
         try:
             now = datetime.datetime.now(datetime.UTC).isoformat()
-            conn = sqlite3.connect(str(tokens_db_path))
+            conn = sqlite3.connect(str(tokens_db_path), timeout=30.0)
+            conn.execute("PRAGMA journal_mode=WAL;")
             cur = conn.cursor()
             cur.execute("""
             CREATE TABLE IF NOT EXISTS schwabdev (
