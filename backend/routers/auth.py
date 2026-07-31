@@ -74,6 +74,16 @@ def schwab_callback(request: Request):
                         "INSERT INTO accounts (id, user_id, account_number, account_hash, name, type, is_active, cash_balance, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (acct_id, DEFAULT_USER_ID, acc_num, acc_hash, name, "SCHWAB", 1 if i == 0 else 0, cash_bal, now)
                     )
+                    from backend.constants import DEFAULT_TICKERS
+                    import uuid
+                    for ticker in DEFAULT_TICKERS:
+                        try:
+                            execute_query(
+                                "INSERT INTO watchlist (id, user_id, account_id, ticker, added_at) VALUES (?, ?, ?, ?, ?)",
+                                (str(uuid.uuid4()), DEFAULT_USER_ID, acct_id, ticker, now)
+                            )
+                        except Exception:
+                            pass
                 if i == 0:
                     set_active_account(rows[0]["id"] if rows else acct_id)
         except Exception as e:
@@ -84,8 +94,8 @@ def schwab_callback(request: Request):
 @router.post("/api/schwab/disconnect")
 def disconnect_schwab():
     schwab_service.disconnect()
-    execute_query("DELETE FROM accounts WHERE type = 'SCHWAB'")
-    reset_session_state()
+    execute_query("UPDATE accounts SET is_active = 0 WHERE type = 'SCHWAB'")
+    execute_query("UPDATE accounts SET is_active = 1 WHERE id = ?", (DEFAULT_ACCOUNT_ID,))
     return {"status": "ok"}
 
 @router.post("/api/session/reset")

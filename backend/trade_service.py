@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 from backend.constants import DEFAULT_ACCOUNT_ID, DEFAULT_USER_ID
 from backend.db.database import execute_query, get_active_account, get_connection
-from backend.market_data import get_market_data_provider, price_cache
+from backend.market_data import fetch_real_market_price, get_market_data_provider, price_cache
 from backend.schwab_service import schwab_service
 
 logger = logging.getLogger(__name__)
@@ -21,10 +21,14 @@ def execute_actions(response_data, account_id=None):
         acct_hash = active_acct.get("account_hash") if active_acct else None
     else:
         acct_id = account_id
-        # Need to fetch account type
         rows = execute_query("SELECT type, account_hash FROM accounts WHERE id = ?", (acct_id,))
         acct_type = rows[0]["type"] if rows else "LOCAL"
         acct_hash = rows[0]["account_hash"] if rows else None
+
+    executed_watchlist = []
+    failed_watchlist = []
+    executed_orders = []
+    failed_orders = []
 
     # Process Watchlist (Always local)
     for w in watchlist_changes:
@@ -33,19 +37,32 @@ def execute_actions(response_data, account_id=None):
         if not ticker:
             continue
         if action == "add":
-            try:
-                execute_query(
-                    "INSERT INTO watchlist (id, user_id, account_id, ticker, added_at) VALUES (?, ?, ?, ?, ?)",
-                    (str(uuid.uuid4()), DEFAULT_USER_ID, acct_id, ticker, datetime.now(UTC).isoformat())
-                )
-            except Exception as e:
-                logger.warning(f"Failed to add {ticker} to watchlist: {e}")
-            market_provider.add_ticker(ticker)
-        elif action == "remove":
-            execute_query(
-                "DELETE FROM watchlist WHERE user_id = ? AND account_id = ? AND ticker = ?",
+            existing = execute_query(
+                "SELECT id FROM watchlist WHERE user_id = ? AND account_id = ? AND UPPER(ticker) = ?",
                 (DEFAULT_USER_ID, acct_id, ticker)
             )
+            if existing:
+                executed_watchlist.append(ticker)
+            else:
+                try:
+                    execute_query(
+                        "INSERT INTO watchlist (id, user_id, account_id, ticker, added_at) VALUES (?, ?, ?, ?, ?)",
+                        (str(uuid.uuid4()), DEFAULT_USER_ID, acct_id, ticker, datetime.now(UTC).isoformat())
+                    )
+                    executed_watchlist.append(ticker)
+                except Exception as e:
+                    logger.warning(f"Failed to add {ticker} to watchlist: {e}")
+                    failed_watchlist.append(ticker)
+            market_provider.add_ticker(ticker)
+        elif action == "remove":
+            try:
+                execute_query(
+                    "DELETE FROM watchlist WHERE user_id = ? AND account_id = ? AND UPPER(ticker) = ?",
+                    (DEFAULT_USER_ID, acct_id, ticker)
+                )
+                executed_watchlist.append(ticker)
+            except Exception as e:
+                failed_watchlist.append(ticker)
             
     is_schwab = (acct_type == "SCHWAB") and schwab_service.get_token_status().get("authenticated", False) and acct_hash
 
@@ -107,7 +124,7 @@ def execute_actions(response_data, account_id=None):
                     (str(uuid.uuid4()), DEFAULT_USER_ID, acct_id, ticker, side, quantity, order_type.upper(), limit_price, stop_price, tif.upper(), status, broker_order_id, datetime.now(UTC).isoformat())
                 )
         else:
-            # Local execution with transaction
+            # Local execution with transaction (Simulated Paper Trading - Always Immediate Execution)
             with get_connection() as conn:
                 cursor = conn.cursor()
                 
@@ -117,8 +134,13 @@ def execute_actions(response_data, account_id=None):
                 
                 # Determine execution price
                 current_price = price_cache.get(ticker)
-                market_price = current_price["price"] if current_price else 150.0
-                exec_price = limit_price if limit_price else market_price
+                if current_price and current_price.get("price"):
+                    market_price = current_price["price"]
+                else:
+                    real_p = fetch_real_market_price(ticker)
+                    market_price = real_p if real_p is not None else 100.0
+                    
+                exec_price = limit_price if (limit_price and float(limit_price) > 0) else market_price
                 total_cost = exec_price * quantity
                 
                 cursor.execute("SELECT quantity, avg_cost FROM positions WHERE user_id = ? AND account_id = ? AND ticker = ?", (DEFAULT_USER_ID, acct_id, ticker))
@@ -128,17 +150,15 @@ def execute_actions(response_data, account_id=None):
                 
                 now = datetime.now(UTC).isoformat()
                 
-                # Pre-trade validation
+                # Pre-trade validation: check funds for buy
                 if side == "buy" and cash < total_cost:
-                    logger.warning(f"Insufficient funds for local buy: {ticker}")
-                    continue
-                if side == "sell" and pos_qty < quantity:
-                    logger.warning(f"Insufficient position for local sell: {ticker}")
+                    logger.warning(f"Insufficient funds for local buy: {ticker} (requires ${total_cost:.2f}, available ${cash:.2f})")
+                    failed_orders.append(f"{side}:{quantity}:{ticker}")
                     continue
                     
-                # Insert order
+                # Insert order (Paper trade always fills immediately)
                 order_id = str(uuid.uuid4())
-                status = "WORKING" if order_type != "market" else "FILLED"
+                status = "FILLED"
                 cursor.execute(
                     "INSERT INTO orders (id, user_id, account_id, ticker, side, quantity, order_type, limit_price, stop_price, time_in_force, status, broker_order_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (order_id, DEFAULT_USER_ID, acct_id, ticker, side, quantity, order_type.upper(), limit_price, stop_price, tif.upper(), status, None, now)
@@ -164,6 +184,7 @@ def execute_actions(response_data, account_id=None):
                                       
                     cursor.execute("INSERT INTO trades (id, user_id, account_id, ticker, side, quantity, price, executed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                                   (str(uuid.uuid4()), DEFAULT_USER_ID, acct_id, ticker, side, quantity, exec_price, now))
+                    executed_orders.append(f"{side}:{quantity}:{ticker}")
                                   
                 elif side == "sell":
                     new_cash = cash + total_cost
@@ -179,5 +200,13 @@ def execute_actions(response_data, account_id=None):
                         
                     cursor.execute("INSERT INTO trades (id, user_id, account_id, ticker, side, quantity, price, executed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                                   (str(uuid.uuid4()), DEFAULT_USER_ID, acct_id, ticker, side, quantity, exec_price, now))
+                    executed_orders.append(f"{side}:{quantity}:{ticker}")
                 
                 conn.commit()
+
+    return {
+        "executed_watchlist": executed_watchlist,
+        "failed_watchlist": failed_watchlist,
+        "executed_orders": executed_orders,
+        "failed_orders": failed_orders
+    }

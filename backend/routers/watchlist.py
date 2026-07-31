@@ -1,10 +1,12 @@
 
+from datetime import UTC, datetime
+import uuid
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from backend.constants import DEFAULT_ACCOUNT_ID, DEFAULT_USER_ID
+from backend.constants import DEFAULT_ACCOUNT_ID, DEFAULT_TICKERS, DEFAULT_USER_ID
 from backend.db.database import execute_query, get_active_account
-from backend.market_data import price_cache
+from backend.market_data import get_market_data_provider, price_cache
 from backend.trade_service import execute_actions
 
 router = APIRouter()
@@ -14,8 +16,8 @@ def get_watchlist():
     active = get_active_account()
     acct_id = active["id"] if active else DEFAULT_ACCOUNT_ID
     
-    wl = execute_query("SELECT ticker FROM watchlist WHERE user_id = ? AND account_id = ?", (DEFAULT_USER_ID, acct_id))
-    
+    wl = execute_query("SELECT ticker FROM watchlist WHERE user_id = ? AND account_id = ? ORDER BY added_at ASC", (DEFAULT_USER_ID, acct_id))
+
     res = []
     for row in wl:
         ticker = row["ticker"]

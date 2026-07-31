@@ -97,13 +97,15 @@ export default function WatchlistPanel({ onSelect }: { onSelect: (ticker: string
               watchlist.map(ticker => {
                 const data = prices[ticker];
                 const flashClass = data?.flash === 'green' ? 'flash-green' : data?.flash === 'red' ? 'flash-red' : '';
+                const tickColor = data?.tickDirection === 'up' ? 'text-uptick' : data?.tickDirection === 'down' ? 'text-downtick' : 'text-gray-400';
+
                 return (
-                  <tr key={ticker} className="border-b border-gray-800/50 cursor-pointer hover:bg-card2 transition-colors" onClick={() => onSelect(ticker)}>
+                  <tr key={ticker} className={`border-b border-gray-800/50 cursor-pointer hover:bg-card2 transition-colors ${tickColor}`} onClick={() => onSelect(ticker)}>
                     <td className="py-2.5 font-bold">{ticker}</td>
                     <td className={`py-2.5 text-right font-mono ${flashClass}`}>
                       {data ? `$${Number(data.price.toFixed(4))}` : '---'}
                     </td>
-                    <td className={`py-2.5 text-right font-mono ${data && data.change >= 0 ? 'text-uptick' : 'text-downtick'}`}>
+                    <td className="py-2.5 text-right font-mono">
                       {data ? `${data.change >= 0 ? '+' : ''}${data.changePercent.toFixed(2)}%` : '---'}
                     </td>
                     <td className="py-2.5 text-right">

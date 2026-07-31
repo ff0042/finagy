@@ -12,6 +12,7 @@ interface ChatMessage {
     trades?: any[];
     watchlist_changes?: any[];
   };
+  confirmedTrades?: Record<number, boolean>;
 }
 
 export default function AIChatPanel() {
@@ -21,6 +22,36 @@ export default function AIChatPanel() {
   const [messages, setMessages] = useState<ChatMessage[]>([
     { role: 'assistant', text: 'Hello! I am FinAlly, your AI trading copilot. How can I help with your portfolio or watchlist today?' }
   ]);
+
+  const handleConfirmTrade = async (msgIndex: number, tradeIndex: number, trade: any) => {
+    try {
+      const res = await fetch('/api/portfolio/trade', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ticker: trade.ticker,
+          quantity: trade.quantity,
+          side: trade.side || 'buy'
+        })
+      });
+      if (res.ok) {
+        setMessages(prev => {
+          const next = [...prev];
+          const targetMsg = { ...next[msgIndex] };
+          targetMsg.confirmedTrades = {
+            ...(targetMsg.confirmedTrades || {}),
+            [tradeIndex]: true
+          };
+          next[msgIndex] = targetMsg;
+          return next;
+        });
+
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('refresh-workstation'));
+        }
+      }
+    } catch (err) { }
+  };
 
   useEffect(() => {
     const handleResetChat = () => {
@@ -56,10 +87,13 @@ export default function AIChatPanel() {
       
       const data = await res.json();
       
-      const assistantText = data.message || 'Action executed successfully.';
+      const assistantText = data.message || 'Response received.';
+      const orders = data.orders || data.trades || [];
+      const watchlist_changes = data.watchlist_changes || [];
       const actions = {
-        trades: data.trades || [],
-        watchlist_changes: data.watchlist_changes || []
+        orders,
+        trades: orders,
+        watchlist_changes
       };
 
       setMessages(prev => [...prev, { 
@@ -68,7 +102,7 @@ export default function AIChatPanel() {
         actions 
       }]);
 
-      if ((actions.trades && actions.trades.length > 0) || (actions.watchlist_changes && actions.watchlist_changes.length > 0)) {
+      if (orders.length > 0 || watchlist_changes.length > 0) {
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('refresh-workstation'));
         }
@@ -114,21 +148,6 @@ export default function AIChatPanel() {
                 )}
               </div>
               
-              {m.actions?.trades && m.actions.trades.length > 0 && (
-                <div className="mt-2 text-xs bg-black/40 p-1.5 rounded text-uptick font-mono">
-                  {m.actions.trades.map((t, idx) => (
-                    <div key={idx}>✓ Executed: {t.side.toUpperCase()} {t.quantity} {t.ticker}</div>
-                  ))}
-                </div>
-              )}
-
-              {m.actions?.watchlist_changes && m.actions.watchlist_changes.length > 0 && (
-                <div className="mt-2 text-xs bg-black/40 p-1.5 rounded text-accent font-mono">
-                  {m.actions.watchlist_changes.map((w, idx) => (
-                    <div key={idx}>✓ Watchlist {w.action.toUpperCase()}: {w.ticker}</div>
-                  ))}
-                </div>
-              )}
             </div>
           </div>
         ))}

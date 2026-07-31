@@ -39,6 +39,7 @@ Always return valid JSON matching this schema for your final response (do NOT wr
 
 def generate_mock_response(user_message: str):
     msg_lower = user_message.lower().strip()
+    msg_clean = re.sub(r'\b(?:shares?|stocks?)\s+(?:of\s+)?|\bof\b', ' ', msg_lower)
     
     orders = []
     watchlist_changes = []
@@ -48,15 +49,17 @@ def generate_mock_response(user_message: str):
     if any(phrase in msg_lower for phrase in ["sell all", "dump all", "close all", "all positions", "everything"]):
         return {"message": fallback_msg, "orders": [], "watchlist_changes": []}
 
-    buy_match = re.search(r'\b(?:buy|purchase|order)\s+(\d+)?\s*(?:shares?\s+of\s+)?([a-z]{1,5})\b', msg_lower)
-    sell_match = re.search(r'\b(?:sell|dump)\s+(\d+)?\s*(?:shares?\s+of\s+)?([a-z]{1,5})\b', msg_lower)
-    add_wl_match = re.search(r'\b(?:add|watch|track)\s+([a-z]{1,5})(?:\s+to\s+(?:the\s+)?watchlist)?\b', msg_lower)
-    rem_wl_match = re.search(r'\b(?:remove|unwatch|delete)\s+([a-z]{1,5})(?:\s+from\s+(?:the\s+)?watchlist)?\b', msg_lower)
-    status_match = re.search(r'\b(?:portfolio|cash|balance|positions|status|hello|hi|help)\b', msg_lower)
+    buy_match = re.search(r'\b(?:buy|purchase|order)\s+(\d+)?\s*([a-z0-9\.\-]{1,10})\b', msg_clean)
+    sell_match = re.search(r'\b(?:sell|dump)\s+(\d+)?\s*([a-z0-9\.\-]{1,10})\b', msg_clean)
+    add_wl_match = re.search(r'\b(?:add|watch|track|put)\s+([a-z0-9\.\-]{1,10})(?:\s+to\s+(?:the|my)?\s*watchlist)?\b', msg_clean)
+    rem_wl_match = re.search(r'\b(?:remove|unwatch|delete)\s+([a-z0-9\.\-]{1,10})(?:\s+from\s+(?:the|my)?\s*watchlist)?\b', msg_clean)
+    status_match = re.search(r'\b(?:portfolio|cash|balance|positions|status|hello|hi|help)\b', msg_clean)
+
+    INVALID_TICKERS = ["ALL", "EVERYTHING", "THE", "MY", "POSITIONS", "PORTFOLIO", "SHARES", "SHARE", "STOCK", "STOCKS", "OF", "FOR", "TO"]
 
     if buy_match:
         ticker = buy_match.group(2).upper()
-        if ticker in ["ALL", "EVERYTHING", "THE", "MY", "POSITIONS"]:
+        if ticker in INVALID_TICKERS:
             return {"message": fallback_msg, "orders": [], "watchlist_changes": []}
         qty = int(buy_match.group(1)) if buy_match.group(1) else 1
         orders.append({"action": "submit", "ticker": ticker, "side": "buy", "quantity": qty, "order_type": "market", "time_in_force": "day"})
@@ -64,7 +67,7 @@ def generate_mock_response(user_message: str):
 
     elif sell_match:
         ticker = sell_match.group(2).upper()
-        if ticker in ["ALL", "EVERYTHING", "POSITIONS", "PORTFOLIO", "THE", "MY"]:
+        if ticker in INVALID_TICKERS:
             return {"message": fallback_msg, "orders": [], "watchlist_changes": []}
         
         active = get_active_account()
@@ -429,7 +432,39 @@ def process_chat(user_message: str, portfolio_context: dict, chat_history: list,
             logging.warning(f"LLM API error: {e}")
             response_data = generate_mock_response(user_message)
 
-    execute_actions(response_data)
+    # Auto-extract intent if model responded without JSON action payload
+    if not response_data.get("orders") and not response_data.get("watchlist_changes"):
+        extracted = generate_mock_response(user_message)
+        if extracted.get("orders"):
+            response_data["orders"] = extracted["orders"]
+        if extracted.get("watchlist_changes"):
+            response_data["watchlist_changes"] = extracted["watchlist_changes"]
+
+    # Execute all actions immediately (trades and watchlist changes)
+    exec_summary = execute_actions(response_data)
+    
+    executed_wl = exec_summary.get("executed_watchlist", []) if exec_summary else []
+    executed_orders = exec_summary.get("executed_orders", []) if exec_summary else []
+    
+    msg_lower = response_data.get("message", "").lower()
+    
+    # Override contradictory error messages if the action actually succeeded
+    if executed_wl:
+        if any(err in msg_lower for err in ["cannot", "could not", "issue with", "failed", "error", "unable"]):
+            tickers_str = ", ".join(executed_wl)
+            response_data["message"] = f"**{tickers_str}** has been added to your watchlist."
+            
+    if executed_orders:
+        if any(err in msg_lower for err in ["cannot", "could not", "issue with", "failed", "error", "unable"]):
+            orders_summary = []
+            for o in response_data.get("orders", []):
+                orders_summary.append(f"{o.get('side', 'buy').upper()} {o.get('quantity', 1)} {o.get('ticker', '')}")
+            response_data["message"] = f"Executed order: **{', '.join(orders_summary)}** at market price."
+            
+    if exec_summary and exec_summary.get("failed_watchlist"):
+        response_data["message"] += f"\n\n⚠️ Failed to update watchlist for: {', '.join(exec_summary['failed_watchlist'])}"
+    if exec_summary and exec_summary.get("failed_orders"):
+        response_data["message"] += f"\n\n⚠️ Failed to execute orders for: {', '.join(exec_summary['failed_orders'])}"
     
     execute_query(
         "INSERT INTO chat_messages (id, user_id, role, content, actions, created_at) VALUES (?, ?, ?, ?, ?, ?)",

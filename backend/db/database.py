@@ -16,7 +16,9 @@ else:
 DB_PATH = DB_DIR / "finally.db"
 
 def get_connection():
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA busy_timeout=30000;")
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -135,6 +137,8 @@ def init_db():
                 cursor.execute(f"ALTER TABLE {col_def[0]} ADD COLUMN {col_def[1]}")
             except Exception:
                 pass
+
+
 
         cursor.execute("SELECT COUNT(*) FROM accounts")
         if cursor.fetchone()[0] == 0:

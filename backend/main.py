@@ -50,16 +50,10 @@ async def snapshot_task():
             active = get_active_account()
             acct_id = active["id"] if active else DEFAULT_ACCOUNT_ID
             
-            # Simple portfolio total calculation
-            cash = active["cash_balance"] if active else 10000.0
-            positions = execute_query("SELECT ticker, quantity, avg_cost FROM positions WHERE user_id = ? AND account_id = ?", (DEFAULT_USER_ID, acct_id))
-            total_pos_value = 0
-            for p in positions:
-                cp = price_cache.get(p["ticker"])
-                current_price = cp["price"] if cp else p["avg_cost"]
-                total_pos_value += current_price * p["quantity"]
-                
-            total_value = cash + total_pos_value
+            loop = asyncio.get_running_loop()
+            from backend.routers.portfolio import get_portfolio
+            portfolio_data = await loop.run_in_executor(None, get_portfolio)
+            total_value = portfolio_data.get("total_value", 10000.0)
             
             execute_query(
                 "INSERT INTO portfolio_snapshots (id, user_id, account_id, total_value, recorded_at) VALUES (?, ?, ?, ?, ?)",
