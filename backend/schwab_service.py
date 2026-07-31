@@ -87,6 +87,7 @@ class SchwabService:
         self._linked_accts_cache = None
         self._linked_accts_ts = 0.0
         self._acct_details_cache = {}
+        self.active_account_id = None
         self._init_client()
 
     def _init_client(self):
@@ -285,6 +286,7 @@ class SchwabService:
     def disconnect(self) -> bool:
         """Clear saved Schwab tokens and reset active client."""
         self.client = None
+        self.active_account_id = None
         try:
             if TOKENS_DB_PATH.exists():
                 try:
@@ -361,13 +363,22 @@ class SchwabService:
                     except Exception as ex:
                         logging.warning(f"Error fetching cash balance for account {acct_num}: {ex}")
 
+                    acct_id = f"schwab_{acct_hash[:8]}"
+                    is_active = 0
+                    if self.active_account_id:
+                        if acct_id == self.active_account_id:
+                            is_active = 1
+                    elif idx == 0:
+                        is_active = 1
+                        self.active_account_id = acct_id
+
                     accounts.append({
-                        "id": f"schwab_{acct_hash[:8]}",
+                        "id": acct_id,
                         "account_number": acct_num,
                         "account_hash": acct_hash,
                         "name": f"SCHWAB_ACCT_{suffix}",
                         "type": "SCHWAB",
-                        "is_active": 1 if idx == 0 else 0,
+                        "is_active": is_active,
                         "cash_balance": cash_bal
                     })
                 self._linked_accts_cache = accounts

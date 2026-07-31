@@ -1,16 +1,14 @@
 
 import logging
-from datetime import UTC, datetime
+import os
 
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
-import os
 
-from backend.constants import DEFAULT_ACCOUNT_ID, DEFAULT_USER_ID, INITIAL_CASH_BALANCE
+from backend.constants import DEFAULT_ACCOUNT_ID
 from backend.db.database import (
     execute_query,
     reset_session_state,
-    set_active_account,
 )
 from backend.schwab_service import schwab_service
 
@@ -41,7 +39,6 @@ def schwab_login():
 @router.get("/api/schwab/callback")
 def schwab_callback(request: Request):
     code = request.query_params.get("code")
-    session_id = request.query_params.get("session")
     error = request.query_params.get("error")
     
     if error:
@@ -55,38 +52,10 @@ def schwab_callback(request: Request):
     if res.get("success"):
         try:
             accounts = schwab_service.get_linked_accounts()
-            now = datetime.now(UTC).isoformat()
-            for i, acc in enumerate(accounts):
-                acc_hash = acc.get("account_hash")
-                acc_num = acc.get("account_number")
-                acct_id = acc.get("id")
-                name = acc.get("name")
-                cash_bal = acc.get("cash_balance", INITIAL_CASH_BALANCE)
-                
-                if not acc_hash:
-                    continue
-                    
-                rows = execute_query("SELECT id FROM accounts WHERE account_hash = ?", (acc_hash,))
-                if rows:
-                    execute_query("UPDATE accounts SET is_active = ? WHERE account_hash = ?", (1 if i == 0 else 0, acc_hash))
-                else:
-                    execute_query(
-                        "INSERT INTO accounts (id, user_id, account_number, account_hash, name, type, is_active, cash_balance, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        (acct_id, DEFAULT_USER_ID, acc_num, acc_hash, name, "SCHWAB", 1 if i == 0 else 0, cash_bal, now)
-                    )
-                    from backend.constants import DEFAULT_TICKERS
-                    import uuid
-                    for ticker in DEFAULT_TICKERS:
-                        try:
-                            execute_query(
-                                "INSERT INTO watchlist (id, user_id, account_id, ticker, added_at) VALUES (?, ?, ?, ?, ?)",
-                                (str(uuid.uuid4()), DEFAULT_USER_ID, acct_id, ticker, now)
-                            )
-                        except Exception:
-                            pass
-                if i == 0:
-                    set_active_account(rows[0]["id"] if rows else acct_id)
-        except Exception as e:
+            if accounts:
+                schwab_service.active_account_id = accounts[0]["id"]
+                schwab_service._linked_accts_cache = None
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to sync Schwab accounts: {e}")
             
     return _render_html(res.get("success", False), res.get("error", ""))
@@ -94,6 +63,8 @@ def schwab_callback(request: Request):
 @router.post("/api/schwab/disconnect")
 def disconnect_schwab():
     schwab_service.disconnect()
+    from backend.routers.portfolio import schwab_snapshots
+    schwab_snapshots.clear()
     execute_query("UPDATE accounts SET is_active = 0 WHERE type = 'SCHWAB'")
     execute_query("UPDATE accounts SET is_active = 1 WHERE id = ?", (DEFAULT_ACCOUNT_ID,))
     return {"status": "ok"}
@@ -113,7 +84,7 @@ def _render_html(success, error_msg):
             with open(template_path, "r", encoding="utf-8") as f:
                 template = f.read()
                 return HTMLResponse(content=template)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to read schwab_success.html: {e}")
             
     # Self-contained fallback HTML that notifies opener and closes popup automatically

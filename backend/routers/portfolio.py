@@ -19,6 +19,9 @@ from backend.schwab_service import schwab_service
 from backend.trade_service import execute_actions
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+schwab_snapshots = {}
 
 def parse_occ_symbol(symbol: str) -> str:
     if len(symbol) < 21:
@@ -35,22 +38,16 @@ def parse_occ_symbol(symbol: str) -> str:
         strike = float(strike_str) / 1000.0
         strike_fmt = f"{strike:g}"
         return f"{root} {date_str} {strike_fmt} {cp}"
-    except Exception:
+    except Exception:  # noqa: BLE001
         return symbol
 
 @router.get("/api/accounts")
 def get_accounts():
     schwab_connected = schwab_service.get_token_status().get("authenticated", False)
-    all_accts = list_accounts()
-    
     if schwab_connected:
-        schwab_accts = [a for a in all_accts if a.get("type") == "SCHWAB"]
-        if schwab_accts:
-            if not any(a.get("is_active") == 1 for a in schwab_accts):
-                set_active_account(schwab_accts[0]["id"])
-                schwab_accts = [a for a in list_accounts() if a.get("type") == "SCHWAB"]
-            return schwab_accts
+        return schwab_service.get_linked_accounts()
             
+    all_accts = list_accounts()
     local_accts = [a for a in all_accts if a.get("type") != "SCHWAB"]
     if local_accts and not any(a.get("is_active") == 1 for a in local_accts):
         set_active_account(local_accts[0]["id"])
@@ -62,6 +59,11 @@ class AccountSelectRequest(BaseModel):
 
 @router.post("/api/accounts/select")
 def select_account(req: AccountSelectRequest):
+    schwab_connected = schwab_service.get_token_status().get("authenticated", False)
+    if schwab_connected and req.account_id.startswith("schwab_"):
+        schwab_service.active_account_id = req.account_id
+        schwab_service._linked_accts_cache = None
+        return get_active_account()
     return set_active_account(req.account_id)
 
 @router.get("/api/stream/prices")
@@ -82,8 +84,12 @@ def get_portfolio():
     accounts = get_accounts()
     active = get_active_account()
     
-    if not active or not any(a["id"] == active["id"] for a in accounts):
-        if accounts:
+    if (not active or not any(a["id"] == active["id"] for a in accounts)) and accounts:
+        if schwab_connected:
+            schwab_service.active_account_id = accounts[0]["id"]
+            schwab_service._linked_accts_cache = None
+            active = get_active_account()
+        else:
             active = set_active_account(accounts[0]["id"])
 
     acct_id = active["id"] if active else DEFAULT_ACCOUNT_ID
@@ -103,7 +109,6 @@ def get_portfolio():
                 elif "liquidity" in balances:
                     cash = float(balances["liquidity"])
                     
-                execute_query("UPDATE accounts SET cash_balance = ? WHERE id = ?", (cash, acct_id))
                 if active:
                     active["cash_balance"] = cash
                 schwab_positions = sec_acct.get("positions", [])
@@ -119,7 +124,7 @@ def get_portfolio():
                         
                     try:
                         get_market_data_provider().add_ticker(ticker)
-                    except Exception:
+                    except Exception:  # noqa: S110, BLE001
                         pass
                         
                     asset_type = instrument.get("assetType", "EQUITY")
@@ -185,8 +190,8 @@ def get_portfolio():
                     "total_value": round(cash + total_pos_value, 2),
                     "total_pnl": round(total_pos_value - total_cost, 2)
                 }
-        except Exception as e:
-            logging.warning(f"Error fetching Schwab portfolio: {e}")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Error fetching Schwab portfolio: {e}")
 
         return {
             "account": active,
@@ -261,6 +266,11 @@ def trade(req: TradeRequest):
 def get_history():
     active = get_active_account()
     acct_id = active["id"] if active else DEFAULT_ACCOUNT_ID
+    
+    schwab_connected = schwab_service.get_token_status().get("authenticated", False)
+    if schwab_connected and active and active.get("type") == "SCHWAB":
+        return schwab_snapshots.get(acct_id, [])
+
     snapshots = execute_query("SELECT total_value, recorded_at FROM portfolio_snapshots WHERE user_id = ? AND account_id = ? ORDER BY recorded_at ASC", (DEFAULT_USER_ID, acct_id))
     return [{"total_value": s["total_value"], "recorded_at": s["recorded_at"]} for s in snapshots]
 
