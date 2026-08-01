@@ -36,7 +36,7 @@ def test_openrouter_model_selection(monkeypatch):
         assert kwargs["model"] == "google/gemini-3.1-pro-preview"
 
 def test_openrouter_error_graceful_fallback(monkeypatch):
-    """Test that if OpenRouter API encounters an error, it gracefully falls back to deterministic mock response."""
+    """Test that if OpenRouter API encounters an error, it returns an informative error message and 0 orders."""
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test-key")
     monkeypatch.setenv("OPENROUTER_MODEL", "google/gemini-3.1-pro-preview")
     monkeypatch.setenv("LLM_MOCK", "false")
@@ -46,8 +46,9 @@ def test_openrouter_error_graceful_fallback(monkeypatch):
         mock_openai_cls.return_value = mock_client
         mock_client.chat.completions.create.side_effect = Exception("OpenRouter 500 Service Unavailable")
         
-        # Should not raise exception, falls back gracefully to mock response
-        process_chat("buy 5 shares of AAPL", {"cash_balance": 10000.0}, [])
+        res = process_chat("buy 5 shares of AAPL", {"cash_balance": 10000.0}, [])
+        assert "AI Service Error" in res["message"]
+        assert len(res.get("orders", [])) == 0
 
 def test_llm_model_selection_endpoints():
     """Test GET /api/llm/models and POST /api/llm/model endpoints."""
@@ -60,7 +61,8 @@ def test_llm_model_selection_endpoints():
     data = res.json()
     assert "active_model" in data
     assert "models" in data
-    assert len(data["models"]) == 7
+    from backend.llm.llm_service import AVAILABLE_MODELS
+    assert len(data["models"]) == len(AVAILABLE_MODELS)
     assert data["models"][0]["id"] == "mock/deterministic"
     assert data["models"][0]["cost_tier"] == "FREE"
 
@@ -83,3 +85,70 @@ def test_deterministic_free_model_behavior(monkeypatch):
     res5 = process_chat("sell 10 shares of TSLA", {"cash_balance": 10000.0}, [])
     assert len(res5["orders"]) == 0
     assert "deterministic" in res5["message"].lower() or "smarter model" in res5["message"].lower()
+
+
+def test_confirmation_mode_does_not_auto_extract_orders(monkeypatch):
+    """Test that in confirmation mode, when model returns empty orders asking for confirmation, auto-extraction is bypassed."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test-key")
+    monkeypatch.setenv("LLM_MOCK", "false")
+    
+    mock_response = MagicMock()
+    mock_response.choices[0].message.content = json.dumps({
+        "message": "Submitting a GTC order to buy 10 shares of IBIT at $32.50 limit. Please reply with CONFIRMED to submit this order.",
+        "orders": [],
+        "watchlist_changes": []
+    })
+    mock_response.choices[0].message.tool_calls = None
+
+    with patch("backend.llm.llm_service.OpenAI") as mock_openai_cls, \
+          patch("backend.llm.llm_service.get_active_account", return_value={"id": "schwab_1", "type": "SCHWAB", "account_hash": "hash123"}), \
+          patch("backend.llm.llm_service.get_autonomous_mode", return_value=False), \
+          patch("backend.llm.llm_service.execute_actions") as mock_exec:
+        
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_exec.return_value = {"executed_orders": [], "failed_orders": []}
+        
+        res = process_chat("please buy 10 shares of ibit GTC at 32.5", {"cash_balance": 10000.0}, [])
+        
+        # Verify no orders were attached to response_data prior to confirmation
+        assert len(res.get("orders", [])) == 0
+        # Verify execute_actions was called with payload containing 0 orders
+        assert mock_exec.call_count == 1
+        executed_payload = mock_exec.call_args[0][0]
+        assert len(executed_payload.get("orders", [])) == 0
+
+
+def test_strict_case_sensitive_confirmation_guard(monkeypatch):
+    """Test that in confirmation mode, lowercase 'confirmed' is rejected and 0 orders are executed."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test-key")
+    monkeypatch.setenv("LLM_MOCK", "false")
+    
+    mock_response = MagicMock()
+    # Simulate an LLM that prematurely outputted orders on lowercase 'confirmed'
+    mock_response.choices[0].message.content = json.dumps({
+        "message": "Order successfully cancelled.",
+        "orders": [{"action": "cancel", "order_id": "12345", "ticker": "META"}],
+        "watchlist_changes": []
+    })
+    mock_response.choices[0].message.tool_calls = None
+
+    with patch("backend.llm.llm_service.OpenAI") as mock_openai_cls, \
+          patch("backend.llm.llm_service.get_active_account", return_value={"id": "schwab_1", "type": "SCHWAB", "account_hash": "hash123"}), \
+          patch("backend.llm.llm_service.get_autonomous_mode", return_value=False), \
+          patch("backend.llm.llm_service.execute_actions") as mock_exec:
+        
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_exec.return_value = {"executed_orders": [], "failed_orders": []}
+        
+        # Test lowercase 'confirmed' -> Should be rejected by backend guard
+        res = process_chat("confirmed", {"cash_balance": 10000.0}, [])
+        assert "Confirmation Rejected" in res["message"]
+        assert len(res.get("orders", [])) == 0
+        
+        # Test exact all-caps 'CONFIRMED' -> Should pass backend guard
+        res_caps = process_chat("CONFIRMED", {"cash_balance": 10000.0}, [])
+        assert len(res_caps.get("orders", [])) == 1
