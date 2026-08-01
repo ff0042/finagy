@@ -1,5 +1,5 @@
 import base64
-import datetime
+from datetime import datetime, timezone, timedelta
 import ipaddress
 import json
 import logging
@@ -27,7 +27,8 @@ else:
 TOKENS_DB_PATH = DB_DIR / "tokens.db"
 TOKENS_FILE_PATH = DB_DIR / "tokens.json"
 
-def ensure_ssl_certs():
+
+def ensure_ssl_certs() -> bool:
     """Ensure self-signed SSL certificates exist for HTTPS callback listener on port 8080."""
     cert_path = DB_DIR / "cert.pem"
     key_path = DB_DIR / "key.pem"
@@ -51,7 +52,7 @@ def ensure_ssl_certs():
             x509.DNSName("localhost")
         ])
 
-        now = datetime.datetime.now(datetime.UTC)
+        now = datetime.now(timezone.utc)
         cert = x509.CertificateBuilder().subject_name(
             name
         ).issuer_name(
@@ -61,9 +62,9 @@ def ensure_ssl_certs():
         ).serial_number(
             x509.random_serial_number()
         ).not_valid_before(
-            now - datetime.timedelta(days=1)
+            now - timedelta(days=1)
         ).not_valid_after(
-            now + datetime.timedelta(days=365)
+            now + timedelta(days=365)
         ).add_extension(
             san, critical=False
         ).sign(key, hashes.SHA256())
@@ -79,10 +80,11 @@ def ensure_ssl_certs():
         logging.warning(f"Failed to generate SSL certificates: {e}")
         return False
 
+
 class SchwabService:
     """High-level Schwab Developer API service for OAuth PKCE authentication, account management, positions, and orders."""
     
-    def __init__(self):
+    def __init__(self) -> None:
         self.client = None
         self._linked_accts_cache = None
         self._linked_accts_ts = 0.0
@@ -90,7 +92,7 @@ class SchwabService:
         self.active_account_id = None
         self._init_client()
 
-    def _init_client(self):
+    def _init_client(self) -> None:
         if self.client is not None:
             try:
                 if hasattr(self.client, "_tokens") and hasattr(self.client._tokens, "_conn"):
@@ -119,10 +121,10 @@ class SchwabService:
                 conn.close()
                 if row and row[0] and row[1] and row[2]:
                     issued_str = row[2].replace("Z", "+00:00")
-                    issued_dt = datetime.datetime.fromisoformat(issued_str)
+                    issued_dt = datetime.fromisoformat(issued_str)
                     if issued_dt.tzinfo is None:
-                        issued_dt = issued_dt.replace(tzinfo=datetime.UTC)
-                    now_dt = datetime.datetime.now(datetime.UTC)
+                        issued_dt = issued_dt.replace(tzinfo=timezone.utc)
+                    now_dt = datetime.now(timezone.utc)
                     # Refresh tokens expire after 7 days
                     if (now_dt - issued_dt).total_seconds() < 6.5 * 86400:
                         has_valid_db_token = True
@@ -138,10 +140,10 @@ class SchwabService:
                     toks = data.get("token_dictionary", {})
                     if toks.get("access_token") and toks.get("refresh_token") and issued_str:
                         issued_str = issued_str.replace("Z", "+00:00")
-                        issued_dt = datetime.datetime.fromisoformat(issued_str)
+                        issued_dt = datetime.fromisoformat(issued_str)
                         if issued_dt.tzinfo is None:
-                            issued_dt = issued_dt.replace(tzinfo=datetime.UTC)
-                        now_dt = datetime.datetime.now(datetime.UTC)
+                            issued_dt = issued_dt.replace(tzinfo=timezone.utc)
+                        now_dt = datetime.now(timezone.utc)
                         if (now_dt - issued_dt).total_seconds() < 6.5 * 86400:
                             has_valid_file_token = True
             except Exception:
@@ -220,10 +222,10 @@ class SchwabService:
             logging.warning(f"Token exchange exception: {e}")
             return {"success": False, "error": str(e)}
 
-    def _write_tokens_to_db(self, tokens_db_path: Path, tokens_data: dict):
+    def _write_tokens_to_db(self, tokens_db_path: Path, tokens_data: dict[str, Any]) -> None:
         """Direct SQLite writer matching schwabdev table schema exactly."""
         try:
-            now = datetime.datetime.now(datetime.UTC).isoformat()
+            now = datetime.now(timezone.utc).isoformat()
             conn = sqlite3.connect(str(tokens_db_path), timeout=30.0)
             conn.execute("PRAGMA journal_mode=WAL;")
             cur = conn.cursor()
@@ -267,10 +269,10 @@ class SchwabService:
         except Exception as e:
             logging.warning(f"Failed to write tokens to DB: {e}")
 
-    def _write_tokens_to_file(self, tokens_file_path: Path, tokens_data: dict):
+    def _write_tokens_to_file(self, tokens_file_path: Path, tokens_data: dict[str, Any]) -> None:
         """Write JSON format matching schwabdev token specification."""
         try:
-            now_iso = datetime.datetime.now(datetime.UTC).isoformat()
+            now_iso = datetime.now(timezone.utc).isoformat()
             formatted = {
                 "access_token_issued": now_iso,
                 "refresh_token_issued": now_iso,
@@ -344,7 +346,8 @@ class SchwabService:
 
         try:
             fetch_fn = getattr(self.client, 'linked_accounts', getattr(self.client, 'account_linked', None))
-            if not fetch_fn: return []
+            if not fetch_fn:
+                return []
             resp = fetch_fn()
             if resp and resp.status_code == 200:
                 data = resp.json()
@@ -434,7 +437,8 @@ class SchwabService:
         
         try:
             place_fn = getattr(self.client, 'place_order', getattr(self.client, 'order_place', None))
-            if not place_fn: return {"success": False, "error": "Order place function missing"}
+            if not place_fn:
+                return {"success": False, "error": "Order place function missing"}
             resp = place_fn(account_hash, order_spec)
             if resp and resp.status_code in (200, 201):
                 return {"success": True, "response": resp.json() if resp.content else "Order submitted"}
@@ -442,15 +446,26 @@ class SchwabService:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def place_order(self, account_hash: str, ticker: str, quantity: float, side: str, order_type: str = "MARKET", limit_price: float = None, stop_price: float = None, duration: str = "DAY") -> dict[str, Any]:
+    def place_order(self, account_hash: str, ticker: str, quantity: float, side: str, 
+                    order_type: str = "MARKET", limit_price: float | None = None, 
+                    stop_price: float | None = None, duration: str = "DAY",
+                    session: str = "NORMAL") -> dict[str, Any]:
         """Place an equity order with advanced parameters via client.order_place()."""
         if not self.client:
             return {"success": False, "error": "Schwab client not initialized"}
             
-        instruction = "BUY" if side.lower() == "buy" else "SELL"
+        side_lower = side.lower().replace(' ', '_')
+        INSTRUCTION_MAP = {
+            'buy': 'BUY',
+            'sell': 'SELL', 
+            'sell_short': 'SELL_SHORT',
+            'buy_to_cover': 'BUY_TO_COVER',
+        }
+        instruction = INSTRUCTION_MAP.get(side_lower, 'BUY')
+        
         order_spec = {
             "orderType": order_type.upper(),
-            "session": "NORMAL",
+            "session": session.upper(),
             "duration": duration.upper(),
             "orderStrategyType": "SINGLE",
             "orderLegCollection": [
@@ -473,16 +488,19 @@ class SchwabService:
             
         try:
             place_fn = getattr(self.client, 'place_order', getattr(self.client, 'order_place', None))
-            if not place_fn: return {"success": False, "error": "Order place function missing"}
+            if not place_fn:
+                return {"success": False, "error": "Order place function missing"}
             resp = place_fn(account_hash, order_spec)
             
-            order_id = None
-            if resp and resp.status_code in (200, 201):
-                location = resp.headers.get("Location")
+            status_code = getattr(resp, "status_code", 400) if resp else 400
+            if resp and status_code in (200, 201, 202):
+                order_id = None
+                headers = getattr(resp, "headers", {}) or {}
+                location = headers.get("Location") or headers.get("location")
                 if location:
                     order_id = location.split("/")[-1]
-                return {"success": True, "order_id": order_id, "response": resp.json() if resp.content else "Order submitted"}
-            return {"success": False, "status_code": resp.status_code, "text": resp.text}
+                return {"success": True, "order_id": order_id}
+            return {"success": False, "status_code": status_code, "text": getattr(resp, "text", str(resp))}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -492,11 +510,22 @@ class SchwabService:
             return {"success": False, "error": "Schwab client not initialized"}
         try:
             cancel_fn = getattr(self.client, 'cancel_order', getattr(self.client, 'order_cancel', None))
-            if not cancel_fn: return {"success": False, "error": "Order cancel function missing"}
-            resp = cancel_fn(account_hash, order_id)
-            if resp and resp.status_code in (200, 204):
+            if not cancel_fn:
+                return {"success": False, "error": "Order cancel function missing"}
+            
+            try:
+                resp = cancel_fn(account_hash, order_id)
+            except Exception:
+                try:
+                    oid = int(order_id) if isinstance(order_id, str) and order_id.isdigit() else order_id
+                    resp = cancel_fn(account_hash=account_hash, order_id=oid)
+                except Exception:
+                    resp = cancel_fn(account_hash, oid)
+                    
+            status_code = getattr(resp, "status_code", 400) if resp else 400
+            if resp and status_code in (200, 201, 202, 204):
                 return {"success": True}
-            return {"success": False, "status_code": resp.status_code, "text": resp.text}
+            return {"success": False, "status_code": status_code, "text": getattr(resp, "text", str(resp))}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -505,13 +534,47 @@ class SchwabService:
         if not self.client:
             return {"success": False, "error": "Schwab client not initialized"}
         try:
-            get_fn = getattr(self.client, 'account_orders', getattr(self.client, 'orders_account', None))
-            if not get_fn: return {"success": False, "error": "Get orders function missing"}
-            resp = get_fn(account_hash)
+            get_fn = None
+            for attr in ['get_orders_for_account', 'get_account_orders', 'account_orders', 'orders_account', 'get_orders', 'orders_for_account']:
+                if hasattr(self.client, attr):
+                    get_fn = getattr(self.client, attr)
+                    break
+            if not get_fn:
+                return {"success": False, "error": "Get orders function missing"}
+                
+            from_time = datetime.now(timezone.utc) - timedelta(days=7)
+            to_time = datetime.now(timezone.utc)
+            
+            try:
+                resp = get_fn(account_hash, from_entered_time=from_time, to_entered_time=to_time)
+            except TypeError:
+                try:
+                    resp = get_fn(account_hash, from_time, to_time)
+                except TypeError:
+                    resp = get_fn(account_hash)
+
             if resp and resp.status_code == 200:
-                return {"success": True, "orders": resp.json()}
-            return {"success": False, "status_code": resp.status_code, "text": resp.text}
+                data = resp.json()
+                orders_list = data if isinstance(data, list) else (data.get("orders", []) if isinstance(data, dict) else [])
+                return {"success": True, "orders": orders_list}
+            return {"success": False, "status_code": getattr(resp, "status_code", 400), "text": getattr(resp, "text", str(resp))}
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    def get_quote_price(self, symbol: str) -> float | None:
+        """Get the latest market price for a symbol. Returns None if unavailable."""
+        if not self.client:
+            return None
+        try:
+            resp = self.client.quotes([symbol.upper()])
+            if resp and resp.status_code == 200:
+                data = resp.json()
+                quote = data.get(symbol.upper(), {})
+                ref = quote.get("quote", {})
+                return ref.get("lastPrice") or ref.get("mark") or ref.get("closePrice")
+        except Exception as e:
+            logging.warning(f"Error fetching quote price for {symbol}: {e}")
+        return None
+
 
 schwab_service = SchwabService()
