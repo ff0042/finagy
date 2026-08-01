@@ -1,3 +1,5 @@
+import type { Order } from '../types';
+
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
 export async function fetchApi<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
@@ -28,4 +30,14 @@ export async function fetchApi<T>(endpoint: string, options: RequestInit = {}): 
   } catch (e) {
     throw new Error('Failed to parse JSON response');
   }
+}
+
+export async function getOrders(): Promise<Order[]> {
+  return fetchApi<Order[]>('/api/orders');
+}
+
+export async function cancelOrder(orderId: string): Promise<{ message?: string }> {
+  return fetchApi<{ message?: string }>(`/api/orders/${orderId}`, {
+    method: 'DELETE',
+  });
 }

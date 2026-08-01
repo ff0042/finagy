@@ -47,3 +47,18 @@ export interface AuthStatus {
   authenticated: boolean;
   token_valid_until?: string | null;
 }
+
+export interface Order {
+  order_id: string;
+  ticker: string;
+  description?: string;
+  action: string;
+  quantity: number;
+  order_type: string;
+  price?: number | null;
+  stop_price?: number | null;
+  filled_price?: number | null;
+  timing: string;
+  status: string;
+  entered_time?: string;
+}
