@@ -101,9 +101,9 @@ def test_confirmation_mode_does_not_auto_extract_orders(monkeypatch):
     mock_response.choices[0].message.tool_calls = None
 
     with patch("backend.llm.llm_service.OpenAI") as mock_openai_cls, \
-          patch("backend.llm.llm_service.get_active_account", return_value={"id": "schwab_1", "type": "SCHWAB", "account_hash": "hash123"}), \
-          patch("backend.llm.llm_service.get_autonomous_mode", return_value=False), \
-          patch("backend.llm.llm_service.execute_actions") as mock_exec:
+         patch("backend.llm.llm_service.get_active_account", return_value={"id": "schwab_1", "type": "SCHWAB", "account_hash": "hash123"}), \
+         patch("backend.llm.llm_service.get_autonomous_mode", return_value=False), \
+         patch("backend.llm.llm_service.execute_actions") as mock_exec:
         
         mock_client = MagicMock()
         mock_openai_cls.return_value = mock_client
@@ -123,6 +123,7 @@ def test_confirmation_mode_does_not_auto_extract_orders(monkeypatch):
 def test_strict_case_sensitive_confirmation_guard(monkeypatch):
     """Test that in confirmation mode, lowercase 'confirmed' is rejected and 0 orders are executed."""
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test-key")
+    monkeypatch.setenv("OPENROUTER_MODEL", "qwen/qwen3.6-flash")
     monkeypatch.setenv("LLM_MOCK", "false")
     
     mock_response = MagicMock()
@@ -135,9 +136,9 @@ def test_strict_case_sensitive_confirmation_guard(monkeypatch):
     mock_response.choices[0].message.tool_calls = None
 
     with patch("backend.llm.llm_service.OpenAI") as mock_openai_cls, \
-          patch("backend.llm.llm_service.get_active_account", return_value={"id": "schwab_1", "type": "SCHWAB", "account_hash": "hash123"}), \
-          patch("backend.llm.llm_service.get_autonomous_mode", return_value=False), \
-          patch("backend.llm.llm_service.execute_actions") as mock_exec:
+         patch("backend.llm.llm_service.get_active_account", return_value={"id": "schwab_1", "type": "SCHWAB", "account_hash": "hash123"}), \
+         patch("backend.llm.llm_service.get_autonomous_mode", return_value=False), \
+         patch("backend.llm.llm_service.execute_actions") as mock_exec:
         
         mock_client = MagicMock()
         mock_openai_cls.return_value = mock_client

@@ -99,3 +99,17 @@ def test_schwab_cancel_order():
     
     assert res["success"] is True
     mock_client.cancel_order.assert_called_once_with("fake_hash", "987654321")
+
+def test_schwab_get_orders():
+    mock_client = MagicMock()
+    schwab_service.client = mock_client
+    
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = [{"orderId": 123, "status": "WORKING"}]
+    mock_client.get_orders_for_account.return_value = mock_response
+    
+    res = schwab_service.get_orders("fake_hash")
+    assert res["success"] is True
+    assert len(res["orders"]) == 1
+    assert res["orders"][0]["orderId"] == 123

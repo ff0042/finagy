@@ -513,16 +513,14 @@ class SchwabService:
             if not cancel_fn:
                 return {"success": False, "error": "Order cancel function missing"}
             
-            oid = int(order_id) if isinstance(order_id, str) and order_id.isdigit() else order_id
-            
-            # schwab-py client.cancel_order expects (account_hash, order_id) or keyword arguments
             try:
-                resp = cancel_fn(account_hash=account_hash, order_id=oid)
+                resp = cancel_fn(account_hash, order_id)
             except Exception:
                 try:
-                    resp = cancel_fn(account_hash, oid)
+                    oid = int(order_id) if isinstance(order_id, str) and order_id.isdigit() else order_id
+                    resp = cancel_fn(account_hash=account_hash, order_id=oid)
                 except Exception:
-                    resp = cancel_fn(oid, account_hash)
+                    resp = cancel_fn(account_hash, oid)
                     
             status_code = getattr(resp, "status_code", 400) if resp else 400
             if resp and status_code in (200, 201, 202, 204):
