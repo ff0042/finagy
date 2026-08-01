@@ -142,7 +142,7 @@ export default function PositionsTable() {
               : 'text-gray-400 hover:text-gray-200'
           }`}
         >
-          Orders / Activity
+          Open Orders
         </button>
       </div>
 
