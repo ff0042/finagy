@@ -1,4 +1,3 @@
-
 from fastapi import APIRouter
 from pydantic import BaseModel
 
@@ -7,6 +6,7 @@ from backend.db.database import execute_query
 from backend.llm.llm_service import get_active_model, process_chat, set_active_model
 from backend.routers.portfolio import get_portfolio
 from backend.routers.watchlist import get_watchlist
+from backend.routers.orders import get_orders
 
 router = APIRouter()
 
@@ -17,10 +17,13 @@ class ChatRequest(BaseModel):
 def chat(req: ChatRequest):
     portfolio = get_portfolio()
     wl = get_watchlist()
+    orders = get_orders()
     context = {
         "portfolio": portfolio,
-        "watchlist": wl
+        "watchlist": wl,
+        "open_orders": orders
     }
+
     
     history_rows = execute_query("SELECT role, content FROM chat_messages WHERE user_id = ? ORDER BY created_at DESC LIMIT 10", (DEFAULT_USER_ID,))
     history = [{"role": r["role"], "content": r["content"]} for r in reversed(history_rows)]
