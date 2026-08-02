@@ -225,7 +225,8 @@ def get_active_model() -> str:
     if not is_authed:
         return "mock/deterministic"
         
-    return "mock/deterministic"
+    return "qwen/qwen3.6-flash"
+
 
 def set_active_model(model_id: str) -> str:
     global _active_model
