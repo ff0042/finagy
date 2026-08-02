@@ -56,8 +56,9 @@ def generate_mock_response(user_message: str):
     if any(phrase in msg_lower for phrase in ["sell all", "dump all", "close all", "all positions", "everything"]):
         return {"message": fallback_msg, "orders": [], "watchlist_changes": []}
 
-    buy_match = re.search(r'\b(?:buy|purchase|order)\s+(\d+)?\s*([a-z0-9\.\-]{1,10})\b', msg_clean)
+    buy_match = re.search(r'\b(?:buy|purchase)\s+(\d+)?\s*([a-z0-9\.\-]{1,10})\b', msg_clean)
     sell_match = re.search(r'\b(?:sell|dump)\s+(\d+)?\s*([a-z0-9\.\-]{1,10})\b', msg_clean)
+
     add_wl_match = re.search(r'\b(?:add|watch|track|put)\s+([a-z0-9\.\-]{1,10})(?:\s+to\s+(?:the|my)?\s*watchlist)?\b', msg_clean)
     rem_wl_match = re.search(r'\b(?:remove|unwatch|delete)\s+([a-z0-9\.\-]{1,10})(?:\s+from\s+(?:the|my)?\s*watchlist)?\b', msg_clean)
     status_match = re.search(r'\b(?:portfolio|cash|balance|positions|status|hello|hi|help)\b', msg_clean)
@@ -337,6 +338,14 @@ def execute_tool_call(tool_name: str, arguments: dict) -> str:
         return f"Error executing tool {tool_name}: {e!s}"
     return f"Unknown tool: {tool_name}"
 
+def find_last_user_trade_intent(chat_history: list) -> str | None:
+    for msg in reversed(chat_history):
+        if msg.get("role") == "user":
+            content = str(msg.get("content", "")).strip()
+            if content and content != "CONFIRMED" and content.lower() != "confirmed":
+                return content
+    return None
+
 def process_chat(user_message: str, portfolio_context: dict, chat_history: list, is_background: bool = False):
     api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
     is_placeholder_key = not api_key or "your-key-here" in api_key.lower() or "your-openrouter-key" in api_key.lower()
@@ -347,8 +356,17 @@ def process_chat(user_message: str, portfolio_context: dict, chat_history: list,
     is_schwab = active_acct and active_acct.get("type") == "SCHWAB"
     is_confirmation_mode = is_schwab and not get_autonomous_mode()
 
+    target_intent = user_message
+    if user_message.strip() == "CONFIRMED":
+        last_intent = find_last_user_trade_intent(chat_history)
+        if last_intent:
+            target_intent = last_intent
+
     if is_mock:
-        response_data = generate_mock_response(user_message)
+        response_data = generate_mock_response(target_intent)
+        if user_message.strip() == "CONFIRMED" and response_data and response_data.get("orders"):
+            response_data["message"] = "Order successfully processed."
+
     elif is_placeholder_key:
         response_data = {
             "message": "⚠️ **OpenRouter API Key Missing**: Please set your `OPENROUTER_API_KEY` in environment variables or settings to use AI models, or select the **Deterministic Engine (Free)** in the header model selector.",
@@ -401,7 +419,11 @@ Note: Watchlist changes are NOT trades; they MUST ALWAYS be executed immediately
                 # strip out complex JSON stuff from history to save context? Or just pass as string.
                 messages.append({"role": msg["role"], "content": str(msg["content"])})
                 
-        messages.append({"role": "user", "content": user_message})
+        if user_message.strip() == "CONFIRMED" and target_intent != user_message:
+            messages.append({"role": "user", "content": f"CONFIRMED. Execute the trade order requested in '{target_intent}' now. Output the raw JSON order payload."})
+        else:
+            messages.append({"role": "user", "content": user_message})
+
 
         try:
             client = OpenAI(
