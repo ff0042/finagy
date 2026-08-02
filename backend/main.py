@@ -1,4 +1,3 @@
-
 import sys
 from pathlib import Path
 
@@ -31,14 +30,15 @@ try:
     from backend.constants import DEFAULT_ACCOUNT_ID, DEFAULT_TICKERS, DEFAULT_USER_ID
     from backend.db.database import execute_query, get_active_account, init_db
     from backend.market_data import get_market_data_provider
-    from backend.routers import auth, llm, portfolio, watchlist
+    from backend.routers import auth, llm, orders, portfolio, watchlist
     from backend.scheduler import start_scheduler
 except ModuleNotFoundError:
     from constants import DEFAULT_ACCOUNT_ID, DEFAULT_TICKERS, DEFAULT_USER_ID
     from db.database import execute_query, get_active_account, init_db
     from market_data import get_market_data_provider
-    from routers import auth, llm, portfolio, watchlist
+    from routers import auth, llm, orders, portfolio, watchlist
     from scheduler import start_scheduler
+
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -125,6 +125,8 @@ app.include_router(auth.router)
 app.include_router(portfolio.router)
 app.include_router(watchlist.router)
 app.include_router(llm.router)
+app.include_router(orders.router)
+
 
 @app.get('/api/health')
 def health():
