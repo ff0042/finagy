@@ -140,10 +140,6 @@ def generate_mock_response(user_message: str):
         else:
             response_text = f"No active open order found for **{target_ticker or 'your request'}**."
 
-
-
-
-
     elif add_wl_match:
         ticker = add_wl_match.group(1).upper()
         if ticker in ["ALL", "THE", "MY"]:
