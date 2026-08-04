@@ -1,4 +1,3 @@
-
 from fastapi import APIRouter
 from pydantic import BaseModel
 
@@ -7,13 +6,14 @@ from backend.db.database import execute_query
 from backend.llm.llm_service import get_active_model, process_chat, set_active_model
 from backend.routers.portfolio import get_portfolio
 from backend.routers.watchlist import get_watchlist
+from backend.routers.orders import get_orders
 
 router = APIRouter()
 
 class ChatRequest(BaseModel):
     message: str
 
-from backend.routers.orders import get_orders
+
 
 @router.post("/api/chat")
 def chat(req: ChatRequest):

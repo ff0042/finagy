@@ -140,7 +140,10 @@ def generate_mock_response(user_message: str):
         else:
             response_text = f"No active open order found for **{target_ticker or 'your request'}**."
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> 39106b0c91775d4bd6636a7714d4db13853db968
     elif add_wl_match:
         ticker = add_wl_match.group(1).upper()
         if ticker in ["ALL", "THE", "MY"]:
@@ -367,6 +370,14 @@ def execute_tool_call(tool_name: str, arguments: dict) -> str:
         return f"Error executing tool {tool_name}: {e!s}"
     return f"Unknown tool: {tool_name}"
 
+def find_last_user_trade_intent(chat_history: list) -> str | None:
+    for msg in reversed(chat_history):
+        if msg.get("role") == "user":
+            content = str(msg.get("content", "")).strip()
+            if content and content != "CONFIRMED" and content.lower() != "confirmed":
+                return content
+    return None
+
 def process_chat(user_message: str, portfolio_context: dict, chat_history: list, is_background: bool = False):
     api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
     is_placeholder_key = not api_key or "your-key-here" in api_key.lower() or "your-openrouter-key" in api_key.lower()
@@ -377,8 +388,17 @@ def process_chat(user_message: str, portfolio_context: dict, chat_history: list,
     is_schwab = active_acct and active_acct.get("type") == "SCHWAB"
     is_confirmation_mode = is_schwab and not get_autonomous_mode()
 
+    target_intent = user_message
+    if user_message.strip() == "CONFIRMED":
+        last_intent = find_last_user_trade_intent(chat_history)
+        if last_intent:
+            target_intent = last_intent
+
     if is_mock:
-        response_data = generate_mock_response(user_message)
+        response_data = generate_mock_response(target_intent)
+        if user_message.strip() == "CONFIRMED" and response_data and response_data.get("orders"):
+            response_data["message"] = "Order successfully processed."
+
     elif is_placeholder_key:
         response_data = {
             "message": "⚠️ **OpenRouter API Key Missing**: Please set your `OPENROUTER_API_KEY` in environment variables or settings to use AI models, or select the **Deterministic Engine (Free)** in the header model selector.",
@@ -431,7 +451,11 @@ Note: Watchlist changes are NOT trades; they MUST ALWAYS be executed immediately
                 # strip out complex JSON stuff from history to save context? Or just pass as string.
                 messages.append({"role": msg["role"], "content": str(msg["content"])})
                 
-        messages.append({"role": "user", "content": user_message})
+        if user_message.strip() == "CONFIRMED" and target_intent != user_message:
+            messages.append({"role": "user", "content": f"CONFIRMED. Execute the trade order requested in '{target_intent}' now. Output the raw JSON order payload."})
+        else:
+            messages.append({"role": "user", "content": user_message})
+
 
         try:
             client = OpenAI(
