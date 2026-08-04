@@ -13,6 +13,8 @@ router = APIRouter()
 class ChatRequest(BaseModel):
     message: str
 
+
+
 @router.post("/api/chat")
 def chat(req: ChatRequest):
     portfolio = get_portfolio()

@@ -415,6 +415,7 @@ class SchwabService:
             logging.warning(f"Error fetching account details: {e}")
         return None
 
+
     def place_market_order(self, account_hash: str, ticker: str, quantity: float, side: str) -> dict[str, Any]:
         """Place an equity market order via client.order_place()."""
         if not self.client:
