@@ -13,14 +13,19 @@ router = APIRouter()
 class ChatRequest(BaseModel):
     message: str
 
+from backend.routers.orders import get_orders
+
 @router.post("/api/chat")
 def chat(req: ChatRequest):
     portfolio = get_portfolio()
     wl = get_watchlist()
+    orders = get_orders()
     context = {
         "portfolio": portfolio,
-        "watchlist": wl
+        "watchlist": wl,
+        "open_orders": orders
     }
+
     
     history_rows = execute_query("SELECT role, content FROM chat_messages WHERE user_id = ? ORDER BY created_at DESC LIMIT 10", (DEFAULT_USER_ID,))
     history = [{"role": r["role"], "content": r["content"]} for r in reversed(history_rows)]

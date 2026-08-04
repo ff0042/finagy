@@ -404,13 +404,17 @@ class SchwabService:
 
         try:
             resp = self.client.account_details(account_hash, fields="positions")
-            if resp and resp.status_code == 200:
-                data = resp.json()
-                self._acct_details_cache[account_hash] = (now_time, data)
-                return data
+            if resp and resp.status_code == 200 and resp.content and resp.content.strip():
+                try:
+                    data = resp.json()
+                    self._acct_details_cache[account_hash] = (now_time, data)
+                    return data
+                except Exception:
+                    pass
         except Exception as e:
             logging.warning(f"Error fetching account details: {e}")
         return None
+
 
     def place_market_order(self, account_hash: str, ticker: str, quantity: float, side: str) -> dict[str, Any]:
         """Place an equity market order via client.order_place()."""

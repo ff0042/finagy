@@ -2,7 +2,6 @@
 
 import { usePriceStream } from '@/hooks/usePriceStream';
 import { useState, useEffect, useCallback } from 'react';
-import OrdersPanel from './OrdersPanel';
 
 interface Position {
   ticker: string;
@@ -20,7 +19,6 @@ export default function PositionsTable() {
   const { prices } = usePriceStream();
   const [positions, setPositions] = useState<Position[]>([]);
   const [cashBalance, setCashBalance] = useState<number>(0);
-  const [activeTab, setActiveTab] = useState<'positions' | 'orders'>('positions');
 
   const fetchPositions = useCallback(async () => {
     try {
@@ -123,63 +121,36 @@ export default function PositionsTable() {
 
   return (
     <div className="bg-card rounded-lg p-4 flex flex-col h-full overflow-x-auto">
-      <div className="flex items-center gap-4 mb-3 border-b border-gray-800 pb-2">
-        <button
-          onClick={() => setActiveTab('positions')}
-          className={`text-sm font-bold transition-colors ${
-            activeTab === 'positions'
-              ? 'text-white border-b-2 border-blue-500 pb-2 -mb-2.5'
-              : 'text-gray-400 hover:text-gray-200'
-          }`}
-        >
-          Positions
-        </button>
-        <button
-          onClick={() => setActiveTab('orders')}
-          className={`text-sm font-bold transition-colors ${
-            activeTab === 'orders'
-              ? 'text-white border-b-2 border-blue-500 pb-2 -mb-2.5'
-              : 'text-gray-400 hover:text-gray-200'
-          }`}
-        >
-          Open Orders
-        </button>
-      </div>
-
-      {activeTab === 'positions' ? (
-        <table className="w-full text-left">
-          <thead className="text-gray-400 border-b border-gray-800 text-xs">
+      <h2 className="text-sm font-bold text-gray-400 mb-2">Positions</h2>
+      <table className="w-full text-left">
+        <thead className="text-gray-400 border-b border-gray-800 text-xs">
+          <tr>
+            <th className="pb-2 font-normal">Symbol</th>
+            <th className="pb-2 text-right font-normal">Qty</th>
+            <th className="pb-2 text-right font-normal">Avg Cost</th>
+            <th className="pb-2 text-right font-normal">Price</th>
+            <th className="pb-2 text-right font-normal">Unrealized P&L</th>
+            <th className="pb-2 text-right font-normal"></th>
+          </tr>
+        </thead>
+        {positions.length === 0 && cashBalance <= 0 ? (
+          <tbody>
             <tr>
-              <th className="pb-2 font-normal">Symbol</th>
-              <th className="pb-2 text-right font-normal">Qty</th>
-              <th className="pb-2 text-right font-normal">Avg Cost</th>
-              <th className="pb-2 text-right font-normal">Price</th>
-              <th className="pb-2 text-right font-normal">Unrealized P&L</th>
-              <th className="pb-2 text-right font-normal"></th>
+              <td colSpan={6} className="py-4 text-center text-gray-500 text-xs">
+                No active positions. Execute a trade or ask AI to buy shares.
+              </td>
             </tr>
-          </thead>
-          {positions.length === 0 && cashBalance <= 0 ? (
-            <tbody>
-              <tr>
-                <td colSpan={6} className="py-4 text-center text-gray-500 text-xs">
-                  No active positions. Execute a trade or ask AI to buy shares.
-                </td>
-              </tr>
-            </tbody>
-          ) : (
-            <>
-              {renderGroup('Equities', equities)}
-              {renderGroup('Funds', funds)}
-              {renderGroup('Options', options)}
-              {renderCash()}
-            </>
-          )}
-        </table>
-      ) : (
-        <div className="flex-1 min-h-0 overflow-y-auto">
-          <OrdersPanel />
-        </div>
-      )}
+          </tbody>
+        ) : (
+          <>
+            {renderGroup('Equities', equities)}
+            {renderGroup('Funds', funds)}
+            {renderGroup('Options', options)}
+            {renderCash()}
+          </>
+        )}
+      </table>
     </div>
   );
 }
+

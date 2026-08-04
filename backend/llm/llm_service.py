@@ -56,8 +56,10 @@ def generate_mock_response(user_message: str):
     if any(phrase in msg_lower for phrase in ["sell all", "dump all", "close all", "all positions", "everything"]):
         return {"message": fallback_msg, "orders": [], "watchlist_changes": []}
 
-    buy_match = re.search(r'\b(?:buy|purchase|order)\s+(\d+)?\s*([a-z0-9\.\-]{1,10})\b', msg_clean)
+    buy_match = re.search(r'\b(?:buy|purchase)\s+(\d+)?\s*([a-z0-9\.\-]{1,10})\b', msg_clean)
     sell_match = re.search(r'\b(?:sell|dump)\s+(\d+)?\s*([a-z0-9\.\-]{1,10})\b', msg_clean)
+    cancel_match = re.search(r'\b(?:cancel|abort|stop|revoke)\s+(?:the|my)?\s*([a-z0-9\.\-]{1,10})?\s*(?:order)?\b', msg_clean)
+
     add_wl_match = re.search(r'\b(?:add|watch|track|put)\s+([a-z0-9\.\-]{1,10})(?:\s+to\s+(?:the|my)?\s*watchlist)?\b', msg_clean)
     rem_wl_match = re.search(r'\b(?:remove|unwatch|delete)\s+([a-z0-9\.\-]{1,10})(?:\s+from\s+(?:the|my)?\s*watchlist)?\b', msg_clean)
     status_match = re.search(r'\b(?:portfolio|cash|balance|positions|status|hello|hi|help)\b', msg_clean)
@@ -111,6 +113,33 @@ def generate_mock_response(user_message: str):
         price_desc = f"at limit price ${limit_price:.2f}" if limit_price else "at market price"
         tif_desc = " (GTC)" if gtc_match else ""
         response_text = f"Executed sale of **{qty} share(s)** of **{ticker}** {price_desc}{tif_desc}."
+
+    elif cancel_match:
+        from backend.routers.orders import get_orders
+        raw_orders = get_orders()
+        open_list = raw_orders if isinstance(raw_orders, list) else (raw_orders.get("orders", []) if isinstance(raw_orders, dict) else [])
+        
+        target_ticker = cancel_match.group(1).upper() if cancel_match.group(1) else None
+        if target_ticker in ["MY", "THE", "ORDER", "ALL"]:
+            target_ticker = None
+            
+        matched_order = None
+        for o in open_list:
+            tck = str(o.get("ticker", "")).upper()
+            status = str(o.get("status", "")).upper()
+            if status in ["WORKING", "OPEN", "PENDING_ACTIVATION"]:
+                if target_ticker is None or tck == target_ticker:
+                    matched_order = o
+                    break
+                    
+        if matched_order:
+            oid = str(matched_order.get("order_id") or matched_order.get("id", ""))
+            tck = matched_order.get("ticker", target_ticker or "ORDER")
+            orders.append({"action": "cancel", "order_id": oid, "ticker": tck})
+            response_text = f"Cancelled order for **{tck}** (ID: `{oid}`)."
+        else:
+            response_text = f"No active open order found for **{target_ticker or 'your request'}**."
+
 
     elif add_wl_match:
         ticker = add_wl_match.group(1).upper()
@@ -197,7 +226,8 @@ def get_active_model() -> str:
     if not is_authed:
         return "mock/deterministic"
         
-    return "mock/deterministic"
+    return "qwen/qwen3.6-flash"
+
 
 def set_active_model(model_id: str) -> str:
     global _active_model
